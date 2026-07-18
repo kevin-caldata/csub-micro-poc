@@ -27,8 +27,14 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { logEvent } from './logger.js';
 import { sessions } from './state.js';
-import { registerTwilioMediaRoute, type TwilioMediaDeps, type TwilioMediaMessage } from './twilio-media.js';
+import { registerTwilioMediaRoute, type TwilioMediaDeps } from './twilio-media.js';
 import type { Session } from './sessions.js';
+
+// The compile-level "media.timestamp/chunk are declared string" assertion for A4 lives in
+// src/type-assertions.ts, not here: tsconfig.json excludes src/**/*.test.ts from `tsc --noEmit`,
+// and tsx --test's esbuild transform strips types without checking them, so a `@ts-expect-error`
+// inside this file would be inert — see that module's header comment for the full rationale.
+// This file keeps only the RUNTIME half of A4 (the `typeof === 'number'` assertion below).
 
 /** Captures every line written via logEvent()/log() (process.stdout.write). */
 function spyOnLog() {
@@ -132,27 +138,6 @@ const connectedFrame = JSON.stringify({ event: 'connected', protocol: 'Call', ve
 beforeEach(() => {
   sessions.clear();
 });
-
-// Compile-level check only (never invoked): the vendored inbound types must declare
-// `timestamp`/`sequenceNumber`/`chunk` as `string` — assigning a number must be a type error
-// [Spec 03 R3, findings/03 claim 4/gotcha 4].
-function _typeCheckMediaNumericsAreStrings(): void {
-  const msg: TwilioMediaMessage = {
-    event: 'media',
-    sequenceNumber: '1',
-    streamSid: 'MZ1',
-    media: {
-      track: 'inbound',
-      // @ts-expect-error chunk is a wire STRING, never a number
-      chunk: 1,
-      // @ts-expect-error timestamp is a wire STRING, never a number
-      timestamp: 12345,
-      payload: 'AQ==',
-    },
-  };
-  void msg;
-}
-void _typeCheckMediaNumericsAreStrings;
 
 describe('registerTwilioMediaRoute — T03.4 media dispatch', () => {
   it('Number()s the string timestamp, forwards the exact payload, and logs one media-cadence line', async () => {
