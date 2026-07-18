@@ -90,15 +90,15 @@ Wave-end merge: `server.ts` route-registration marker section — T03.2 and T07.
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
-| T05.1 | 05-session-bridge/01-bargein-and-marks.md | T01, T03, T04, T06 | D | | |
-| T05.2 | 05-session-bridge/02-dispatch-and-epoch.md | T05.1, T03, T04, T06, T08 | - | | |
+| T05.1 | 05-session-bridge/01-bargein-and-marks.md | T01, T03, T04, T06 | OK | 91401aa+19b5777 | deep review APPROVED after fixes (A14 grep clean, loud unwired-gateway guard); Minors handed to T05.2: one writer for firstMarkNameOfResponse, barge-in line double-emit vs TurnRecorder, retire dead isFirstMarkOfResponse seam |
+| T05.2 | 05-session-bridge/02-dispatch-and-epoch.md | T05.1, T03, T04, T06, T08 | D | | |
 | T05.3 | 05-session-bridge/03-turns-and-tool-gate.md | T05.2, T07, T08 | - | | |
 | T05.4 | 05-session-bridge/04-orchestration-and-teardown.md | T05.1–T05.3, T02, T03, T04, T06, T07, T08 | - | | |
 | T09.1 | 09-deployment-ops/01-railway-config-verify.md | T01 | OK | e8e80d6 | verify-only; railway.json already conformant; invariants locked by new test |
-| T09.2 | 09-deployment-ops/02-fallback-clip-assets.md | T01 | D | | DEV-04: repo-DSP generation route (no ffmpeg) |
-| T09.3 | 09-deployment-ops/03-fallback-helper.md | T01, T03, T08, T09.2 | - | | |
+| T09.2 | 09-deployment-ops/02-fallback-clip-assets.md | T01 | OK | 05bee1a | DEV-04 route done: System.Speech + build-fallback-clip.ts (replaces make-fallback-clip.sh); clip 6.97s/55752B; S23 live playback deferred to M1 |
+| T09.3 | 09-deployment-ops/03-fallback-helper.md | T01, T03, T08, T09.2 | OK | 1b85286 | clean; playFallbackAndClose + playFallbackAndCloseWith; wiring gated on S23 (orchestrator, Wave D end) |
 | T09.4 | 09-deployment-ops/04-check-credits.md | T01 | OK | 29d8c31 | guard+error paths live-verified; success path deferred to M1 (no real key on host) |
-| T09.5 | 09-deployment-ops/05-runbook.md | T01, T02, T08, T09.3, T09.4 | - | | |
+| T09.5 | 09-deployment-ops/05-runbook.md | T01, T02, T08, T09.3, T09.4 | OK | f41812f | clean; docs/RUNBOOK.md; T09 lane complete (live halves at M1) |
 
 Wave-end merge (orchestrator-applied, gated on spike S23): one-line wiring `playFallbackAndClose` → T05.4's `setOnGatewayFailure` seam. Also: T05.4 may extend `onSessionStart` signature to `(session, pendingCall)` — record against T03 row's Note. `startLoopMonitor()` boot call site added per T08.3 hand-off.
 
