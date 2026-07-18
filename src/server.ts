@@ -4,6 +4,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, type AppConfig } from './config.js';
 import { logEvent } from './logger.js';
+import { registerTwimlRoutes } from './twiml.js';
 
 export interface ShutdownOpts {
   deadlineMs?: number;
@@ -37,7 +38,7 @@ export async function buildApp(
 
   app.get('/health', async () => ({ ok: true }));
 
-  // registerTwimlRoutes(app, config)  — added by T02.3
+  registerTwimlRoutes(app, config);
   // --- route registration (Specs 03/07) ---
   // Spec 03 adds: registerTwilioMediaRoute(app)   — GET /twilio-media { websocket: true }
   // Spec 07 adds: mcpRoutes(app)                  — POST /mcp (+ 405 GET/DELETE)
