@@ -21,6 +21,18 @@ describe('loadConfig', () => {
     expect(() => loadConfig(env)).toThrow(/AI_GATEWAY_API_KEY/);
     expect(() => loadConfig(env)).toThrow(/OIDC/);
   });
+  it('throws a boot-time error naming the variable when TWILIO_AUTH_TOKEN is missing (R7.2)', () => {
+    const { TWILIO_AUTH_TOKEN: _omit, ...env } = BASE;
+    expect(() => loadConfig(env)).toThrow(/TWILIO_AUTH_TOKEN/);
+  });
+  it('PORT parses as a number from a numeric string (R7.5)', () => {
+    const c = loadConfig({ ...BASE, PORT: '8080' });
+    expect(c.port).toBe(8080);
+    expect(typeof c.port).toBe('number');
+  });
+  it('rejects a non-numeric PORT', () => {
+    expect(() => loadConfig({ ...BASE, PORT: 'not-a-port' })).toThrow();
+  });
   it('prefers PUBLIC_HOST over RAILWAY_PUBLIC_DOMAIN', () => {
     const c = loadConfig({ ...BASE, RAILWAY_PUBLIC_DOMAIN: 'x.up.railway.app' });
     expect(c.publicHost).toBe('example.ngrok.app');

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { log, logEvent, ms, now, safeRaw } from '../src/logger.js';
+import { pct } from '../src/latency.js';
 
 /** Monkey-patches process.stdout/stderr.write for the duration of fn and returns what was written. */
 function withCapturedOutput(fn: () => void): { stdoutLines: string[]; stderrWrites: unknown[] } {
@@ -112,5 +113,24 @@ describe('logger', () => {
       log('error', 'err-line', { code: 'X' });
     });
     expect(stderrWrites.length).toBe(0);
+  });
+});
+
+// R8.3: pct() nearest-rank helper (src/latency.ts). test/latency.test.ts already covers the
+// empty/single-value/20-element cases against the recorder's own consumption of pct(); these
+// two are the R8.3 items not exercised there.
+describe('pct() nearest-rank (Spec 08 R8.3)', () => {
+  it('p95 of n=10 exhibits max-adjacent behavior (ceil(0.95*10)-1 = 9 -> the last/max element)', () => {
+    const values = Array.from({ length: 10 }, (_, i) => i + 1); // 1..10
+    expect(pct(values, 95)).toBe(10); // same as the max at this n — the findings/09 §7 caveat
+    expect(pct(values, 95)).toBe(Math.max(...values));
+  });
+
+  it('does not mutate the input array (order and contents preserved)', () => {
+    const values = [30, 10, 20, 50, 40];
+    const snapshot = [...values];
+    pct(values, 50);
+    pct(values, 95);
+    expect(values).toEqual(snapshot);
   });
 });
