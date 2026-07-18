@@ -117,9 +117,13 @@ describe('openGatewayLeg — send/appendAudio (never batch)', () => {
     });
     try {
       await waitUntil(() => opened);
+      // T04.4 sends session-update + the greeting response-create automatically on 'open'
+      // (Spec 04 R8) — wait for those two first frames before asserting on appendAudio's frame.
+      await waitUntil(() => mock1.frames.length >= 2);
+      const framesBefore = mock1.frames.length;
       await leg.appendAudio('AAAA');
-      await waitUntil(() => mock1.frames.length >= 1);
-      assert.deepEqual(mock1.frames, [{ type: 'input-audio-append', audio: 'AAAA' }]);
+      await waitUntil(() => mock1.frames.length >= framesBefore + 1);
+      assert.deepEqual(mock1.frames.slice(framesBefore), [{ type: 'input-audio-append', audio: 'AAAA' }]);
     } finally {
       leg.close();
       await waitUntil(() => closed, 1000).catch(() => {});

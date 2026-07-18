@@ -13,6 +13,7 @@ import WebSocket from 'ws';
 import type {
   Experimental_RealtimeModelV4ClientEvent as ClientEvent,
   Experimental_RealtimeModelV4ServerEvent as ServerEvent,
+  Experimental_RealtimeModelV4SessionConfig as SessionConfig,
   Experimental_RealtimeModelV4ToolDefinition as ToolDefinition,
 } from '@ai-sdk/provider';
 import type { AppConfig } from './config.js';
@@ -173,16 +174,65 @@ export function gatewayWsOptions(
 }
 
 /**
- * Opens and owns one gateway-leg `ws` client connection (Spec 04 R4/R5/R6/R11/R12).
+ * Default assistant persona for a phone call (Spec 04 R8, verbatim text). MUST contain the
+ * BRD §5.7 tool-preamble sentence verbatim — asserted by A3's test on the exact substring.
+ * Exported so it is overridable later without touching `buildCallSessionConfig`.
+ */
+export const INSTRUCTIONS =
+  "You are a friendly, concise voice assistant on a phone call. Keep answers short and " +
+  'conversational — one to three sentences. Before calling any tool, briefly say you\'re ' +
+  "checking (e.g., 'One moment, let me look that up').";
+
+/** Greeting variant 1 (findings/04 D5): per-response instruction override, no synthetic
+ *  conversation items. Verbatim text from Spec 04 R8. */
+const GREETING_INSTRUCTIONS = 'Greet the caller warmly in one short sentence and ask how you can help.';
+
+/**
+ * Builds the full `session-update` config for a call (Spec 04 R8 snippet). `formats` comes
+ * from Spec 06's `audioFormatsFor(config.audioMode)` — the single source of format objects;
+ * this function never hand-builds them, only spreads what it is given (R7-style passthrough).
  *
- * This task (T04.3) implements construction, the lifecycle/terminal-signal contract, typed
- * send/receive plumbing (including array-frame normalization), and the optional keepalive
- * ping. It deliberately does NOT send `session-update`/`response-create` on `'open'` — that
- * belongs to T04.4 (Spec 04 R8); `handleEvent` here only forwards to `callbacks.onEvent`,
- * T04.5 builds the full 23-event dispatch table (Spec 04 R9/R10).
+ * Deviation-by-design (same rationale as `mintRealtimeToken`/`gatewayWsOptions`): the Spec 04
+ * R8 snippet reads `config.*` from ambient scope; this repo's `loadConfig()` forbids a config
+ * singleton (Spec 01 R5), so `cfg` is an explicit parameter here.
+ */
+function buildCallSessionConfig(
+  tools: ToolDefinition[],
+  formats: OpenGatewayLegOptions['formats'],
+  cfg: AppConfig,
+): SessionConfig {
+  return {
+    instructions: INSTRUCTIONS,
+    voice: cfg.voice, // 'marin' default; S8 unverified — boot-config fallback via VOICE_FALLBACK, no runtime auto-retry
+    ...(formats as unknown as Pick<SessionConfig, 'inputAudioFormat' | 'outputAudioFormat'>),
+    inputAudioTranscription: {}, // {} valid, all fields optional (findings/02 correction 6)
+    turnDetection: {
+      type: 'server-vad',
+      silenceDurationMs: cfg.vadSilenceMs,
+      threshold: cfg.vadThreshold,
+      prefixPaddingMs: cfg.vadPrefixPaddingMs,
+    },
+    tools, // verbatim passthrough (R7) — no schema manipulation
+    ...(cfg.gatewayTags
+      ? { providerOptions: { gateway: { tags: cfg.gatewayTags } } } // S32; default off
+      : {}),
+  };
+}
+
+/**
+ * Opens and owns one gateway-leg `ws` client connection (Spec 04 R4/R5/R6/R8/R11/R12).
+ *
+ * T04.3 implemented construction, the lifecycle/terminal-signal contract, typed send/receive
+ * plumbing (including array-frame normalization), and the optional keepalive ping. This task
+ * (T04.4) adds the first-frame contract on `'open'`: `session-update` (always first — the
+ * gateway's 30-s first-client-message rule) then the greeting `response-create`, either
+ * immediately or deferred to the first `session-updated` event via `WAIT_FOR_SESSION_UPDATED`
+ * (S6 fallback). `handleEvent` still only forwards to `callbacks.onEvent` for every event
+ * except the interim `session-updated` pre-forward check below; T04.5 builds the full
+ * 23-event dispatch table (Spec 04 R9/R10).
  */
 export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
-  const { mint, callSid, config, callbacks } = opts;
+  const { mint, callSid, tools, formats, config, callbacks } = opts;
 
   const rt = gateway.experimental_realtime(config.modelId);
   const wsCfg = rt.getWebSocketConfig({ token: mint.token, url: mint.url });
@@ -193,6 +243,9 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
   let terminal = false; // true once onOpenFailed or onClose has fired — enforces R5 mutual exclusivity
   let upgradeStatusCode: number | undefined;
   let pingTimer: NodeJS.Timeout | undefined;
+  // R8/S6: when WAIT_FOR_SESSION_UPDATED, the greeting thunk waits here for the FIRST
+  // 'session-updated' event (fired once from handleEvent below, then cleared).
+  let pendingGreeting: (() => Promise<void>) | undefined;
 
   // Attach ALL listeners synchronously at construction — an unhandled 'error' crashes the
   // process and kills every concurrent call (findings/08 gotcha 10).
@@ -211,6 +264,11 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
         if (gw.readyState === WebSocket.OPEN) gw.ping();
       }, config.gatewayPingSeconds * 1000);
     }
+    // R8: session-update MUST be the first client frame (gateway's 30-s first-message rule),
+    // then the greeting response-create — back-to-back, ordering enforced by `await send(...)`
+    // resolving before `greet()` is ever invoked. Fire-and-forget from this synchronous handler;
+    // `onOpen` below fires once the frames are queued (GatewayLegCallbacks.onOpen doc comment).
+    void sendFirstFrames();
     callbacks.onOpen();
   });
 
@@ -285,6 +343,18 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
   });
 
   function handleEvent(ev: ServerEvent): void {
+    // Interim pre-forward check (T04.4 scope): T04.5 folds this into the full R9/R10 dispatch
+    // table. `session-updated` is the only ground truth for the applied audio format/voice
+    // (S1/S2/S8) — log `.raw` verbatim every time, and fire the deferred greeting (S6) on the
+    // FIRST occurrence only.
+    if (ev.type === 'session-updated') {
+      logEvent({ level: 'info', message: 'session-updated', event: 'session-updated', callSid, raw: ev.raw });
+      if (pendingGreeting) {
+        const greet = pendingGreeting;
+        pendingGreeting = undefined;
+        void greet();
+      }
+    }
     // T04.3 scope ends here; T04.5 inserts the full R9/R10 dispatch table before this forward.
     callbacks.onEvent(ev);
   }
@@ -292,6 +362,31 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
   async function send(ev: ClientEvent): Promise<void> {
     if (gw.readyState !== WebSocket.OPEN) return; // post-terminal / pre-open guard: silent no-op
     gw.send(JSON.stringify(await rt.serializeClientEvent(ev))); // ALWAYS await — typed unknown | PromiseLike<unknown>
+  }
+
+  /**
+   * Spec 04 R8: on 'open', send `session-update` as the first frame, then the greeting
+   * `response-create`. Ordering is normative — never `response-create` before `session-update`
+   * (the model would answer in PCM16@24k default voice with no instructions, findings/04 D5).
+   * `WAIT_FOR_SESSION_UPDATED` (S6 fallback) defers the greeting to the first `session-updated`
+   * event instead of firing it immediately (still within the FR-1 2s greeting budget).
+   */
+  async function sendFirstFrames(): Promise<void> {
+    await send({ type: 'session-update', config: buildCallSessionConfig(tools, formats, config) });
+    logEvent({
+      level: 'info',
+      message: 'session-update sent',
+      event: 'session-update-sent',
+      callSid,
+      audioMode: config.audioMode,
+      voice: config.voice,
+    });
+    const greet = () => send({ type: 'response-create', options: { instructions: GREETING_INSTRUCTIONS } });
+    if (config.waitForSessionUpdated) {
+      pendingGreeting = greet; // fired on first 'session-updated' in handleEvent above
+    } else {
+      await greet();
+    }
   }
 
   async function appendAudio(base64: string): Promise<void> {
