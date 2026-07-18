@@ -13,7 +13,7 @@ Companion protocol: `plans/README.md`. Wave structure: master plan `docs/specs/0
 - Last updated: -
 - Next dispatchable tasks: T01.1
 - Open blockers: none
-- Notes: build not started; repo not yet a git repo (T01.1 runs `git init -b main`)
+- Notes: build not started; git repo already initialized on `main` with BRD, docs/, and plans/ committed (T01.1 verifies instead of init)
 
 ---
 

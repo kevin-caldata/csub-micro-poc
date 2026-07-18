@@ -27,7 +27,7 @@
 ## Steps
 
 - [ ] Verify toolchain: run `node --version` — expect `v22.x`. If not 22.x, STOP and report (engines pin requires it).
-- [ ] Run `git init -b main` in `D:\projects-linean\CSUB-RIO-POC` (the directory is not yet a git repo). Do not create a remote.
+- [ ] Verify the repo exists: `git rev-parse --abbrev-ref HEAD` — expect `main` (the repo was initialized during the planning phase with docs/ and plans/ already committed). Only if this fails, run `git init -b main`. Do not create a remote.
 - [ ] Write `.npmrc` with the exact one-line content from Spec 01 R3. Must exist BEFORE any `npm install` so `save-exact` governs devDependency resolution.
 - [ ] Write `.gitignore` with the exact content from Spec 01 R9.
 - [ ] Write `.env.example` with the exact content from Spec 01 R8.
