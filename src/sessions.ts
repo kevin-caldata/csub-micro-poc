@@ -44,6 +44,12 @@ export interface Session {
   // internal, this-spec-only (not a cross-spec contract): holds the R4 5 s start-timeout
   // handle so teardown can clear it.
   startTimer?: ReturnType<typeof setTimeout>;
+
+  // internal, this-spec-only (not a cross-spec contract): T03.3's mark-naming rule (Spec 03
+  // R5) tracks the first mark name minted per responseId here — per-session state, never
+  // module-level (R9 isolation) — so `isFirstMarkOfResponse` can flag `tFirstMarkEcho` without
+  // any global map.
+  firstMarkByResponse: Map<string, string>;
 }
 
 // ONE process-wide map: re-exports Spec 02's src/state.ts `sessions` instance verbatim (master
@@ -76,6 +82,7 @@ export function createSession(init: {
     responseActive: false,
     pendingToolCalls: new Map<string, unknown>(),
     timestamps: {},
+    firstMarkByResponse: new Map<string, string>(),
     teardown(reason: string) {
       teardownSession(session, reason, { twilioCloseCode: 1001 });
       // 1001 ("going away") because the only external caller of Session.teardown is Spec 02's
