@@ -156,3 +156,100 @@ export class Downsampler3x {
     this.phase = 0;
   } // zero history = start-from-silence
 }
+
+// T06.3 — createTranscoder (Path A zero-copy / Path B wrappers) + audioFormatsFor.
+// Verbatim per Spec 06 R2/R3/R4/R9 and findings/06 §Wiring, C9, C11, gotchas 5-7.
+// Never reset the inbound upsampler mid-call (R11.1); resetOutbound() resets ONLY the
+// outbound downsampler — Spec 05 wires the two required call sites (response-created,
+// bargeIn()), not this module (R11.2, A9).
+
+/** `'pcmu'` = Path A zero-copy base64 passthrough; `'transcode'` = Path B streaming
+ *  mu-law 8k <-> PCM16@24k conversion with persistent per-call resampler state. */
+export type AudioMode = 'pcmu' | 'transcode';
+
+/** Session-update format fragments for `opts.formats` (Spec 04/05). `audio/pcmu` MUST
+ *  carry NO `rate` key in either direction (G.711 is fixed 8 kHz; the GA OpenAI schema
+ *  defines no rate on pcmu) — never "helpfully" add `rate: 8000`. `audio/pcm` MUST carry
+ *  `rate: 24000` in both directions (the only PCM rate OpenAI supports). */
+export function audioFormatsFor(mode: AudioMode): {
+  inputAudioFormat: { type: string; rate?: number };
+  outputAudioFormat: { type: string; rate?: number };
+} {
+  return mode === 'pcmu'
+    ? {
+        inputAudioFormat: { type: 'audio/pcmu' },
+        outputAudioFormat: { type: 'audio/pcmu' },
+      }
+    : {
+        inputAudioFormat: { type: 'audio/pcm', rate: 24000 },
+        outputAudioFormat: { type: 'audio/pcm', rate: 24000 },
+      };
+}
+
+/** Per-call transcoder. Spec 05 creates exactly one instance per Session, stored on the
+ *  Session object, never shared across calls (FR-3 isolation). */
+export interface Transcoder {
+  /** Twilio media.payload (base64 mu-law 8k) -> gateway input-audio-append.audio (base64). */
+  twilioToGateway(payloadB64: string): string;
+  /** Gateway audio-delta.delta (base64) -> Twilio outbound media.payload (base64 mu-law 8k). */
+  gatewayToTwilio(deltaB64: string): string;
+  /** Reset outbound downsampler state. No-op in pcmu mode. See Spec 06 R11 for the two
+   *  required call sites (Spec 05: response-created, bargeIn()). */
+  resetOutbound(): void;
+  readonly mode: AudioMode;
+}
+
+/** Factory: `'transcode'` instances own one private Upsampler3x + one Downsampler3x
+ *  (per-call state, never shared — Spec 06 R11.4). `'pcmu'` instances hold no DSP state
+ *  at all — both directions are the identity function on the base64 string (R4). */
+export function createTranscoder(mode: AudioMode): Transcoder {
+  if (mode === 'pcmu') {
+    return {
+      mode,
+      twilioToGateway(payloadB64: string): string {
+        return payloadB64;
+      },
+      gatewayToTwilio(deltaB64: string): string {
+        return deltaB64;
+      },
+      resetOutbound(): void {
+        // no-op in pcmu mode (R4)
+      },
+    };
+  }
+
+  const up = new Upsampler3x(); // inbound: never reset mid-call (R7/R11.1)
+  const down = new Downsampler3x(); // outbound: reset() on each new response (R11.2)
+
+  return {
+    mode,
+    // Inbound: Twilio media event -> gateway input-audio-append. Vendored verbatim from
+    // findings/06 §Wiring / Spec 06 R9.
+    twilioToGateway(payloadB64: string): string {
+      const mu = Buffer.from(payloadB64, 'base64'); // 160 B typical, not contractual
+      const pcm8 = new Int16Array(mu.length);
+      for (let i = 0; i < mu.length; i++) pcm8[i] = MULAW_DEC[mu[i]!]!;
+      const pcm24 = up.process(pcm8);
+      return Buffer.from(pcm24.buffer, 0, pcm24.byteLength).toString('base64'); // 1280 chars per 20 ms
+    },
+    // Outbound: gateway audio-delta -> Twilio media payload. Vendored verbatim from
+    // findings/06 §Wiring / Spec 06 R9, including the mandatory odd-offset/odd-length
+    // copy fallback (gotcha 5) and the 3-arg Int16Array view form (never `new
+    // Int16Array(buf)` on a Buffer directly — gotcha 6).
+    gatewayToTwilio(deltaB64: string): string {
+      const raw = Buffer.from(deltaB64, 'base64');
+      // zero-copy view needs even byteOffset & even length; fall back to a copy otherwise
+      const pcm24 =
+        raw.byteOffset % 2 === 0 && raw.byteLength % 2 === 0
+          ? new Int16Array(raw.buffer, raw.byteOffset, raw.byteLength >> 1)
+          : new Int16Array(new Uint8Array(raw.subarray(0, raw.byteLength & ~1)).buffer);
+      const pcm8 = down.process(pcm24);
+      const mu = new Uint8Array(pcm8.length);
+      for (let i = 0; i < pcm8.length; i++) mu[i] = MULAW_ENC[pcm8[i]! & 0xffff]!;
+      return Buffer.from(mu).toString('base64'); // any size is fine for Twilio (C11)
+    },
+    resetOutbound(): void {
+      down.reset();
+    },
+  };
+}
