@@ -15,6 +15,15 @@ const EnvSchema = z.object({
   MODEL_ID: z.string().min(1).default('openai/gpt-realtime-2.1'),
   AUDIO_MODE: z.enum(['pcmu', 'transcode']).default('transcode'),
   VOICE: z.string().min(1).default('marin'),
+  VOICE_FALLBACK: z.string().min(1).default('alloy'),
+  VAD_SILENCE_MS: z.coerce.number().int().default(500),
+  VAD_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
+  VAD_PREFIX_PADDING_MS: z.coerce.number().int().default(300),
+  TOKEN_TTL_SECONDS: z.coerce.number().int().default(600),
+  GATEWAY_HANDSHAKE_TIMEOUT_MS: z.coerce.number().int().default(5000),
+  GATEWAY_PING_SECONDS: z.coerce.number().int().default(0),
+  WAIT_FOR_SESSION_UPDATED: z.enum(['true', 'false']).default('false').transform(v => v === 'true'),
+  GATEWAY_TAGS: z.string().optional(),
 });
 
 export interface AppConfig {
@@ -27,6 +36,15 @@ export interface AppConfig {
   modelId: string;
   audioMode: 'pcmu' | 'transcode';
   voice: string;
+  voiceFallback: string;
+  vadSilenceMs: number;
+  vadThreshold: number;
+  vadPrefixPaddingMs: number;
+  tokenTtlSeconds: number;
+  gatewayHandshakeTimeoutMs: number;
+  gatewayPingSeconds: number;
+  waitForSessionUpdated: boolean;
+  gatewayTags: string[] | undefined;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -42,6 +60,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       'Invalid environment configuration:\n  - set PUBLIC_HOST (local dev, e.g. your ngrok host) ' +
       'or run on Railway where RAILWAY_PUBLIC_DOMAIN is injected after Generate Domain.');
   }
+  const gatewayTags = e.GATEWAY_TAGS
+    ? e.GATEWAY_TAGS.split(',').map(t => t.trim()).filter(t => t.length > 0)
+    : undefined;
   return {
     aiGatewayApiKey: e.AI_GATEWAY_API_KEY,
     twilioAuthToken: e.TWILIO_AUTH_TOKEN,
@@ -50,5 +71,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     modelId: e.MODEL_ID,
     audioMode: e.AUDIO_MODE,
     voice: e.VOICE,
+    voiceFallback: e.VOICE_FALLBACK,
+    vadSilenceMs: e.VAD_SILENCE_MS,
+    vadThreshold: e.VAD_THRESHOLD,
+    vadPrefixPaddingMs: e.VAD_PREFIX_PADDING_MS,
+    tokenTtlSeconds: e.TOKEN_TTL_SECONDS,
+    gatewayHandshakeTimeoutMs: e.GATEWAY_HANDSHAKE_TIMEOUT_MS,
+    gatewayPingSeconds: e.GATEWAY_PING_SECONDS,
+    waitForSessionUpdated: e.WAIT_FOR_SESSION_UPDATED,
+    gatewayTags: gatewayTags && gatewayTags.length > 0 ? gatewayTags : undefined,
   };
 }
