@@ -7,7 +7,9 @@ import { logEvent } from './logger.js';
 import { registerTwimlRoutes, claimPendingCall } from './twiml.js';
 import { mcpRoutes } from './mcp-server.js';
 import { registerTwilioMediaRoute } from './twilio-media.js';
-import { startSessionBridge } from './session.js';
+import { startSessionBridge, setOnGatewayFailure } from './session.js';
+import { playFallbackAndClose } from './fallback.js';
+import { startLoopMonitor } from './latency.js';
 import { sessions } from './state.js';
 
 export interface ShutdownOpts {
@@ -118,6 +120,9 @@ if (isMain) {
     process.exit(1);
   }
 
+  // Orchestrator Wave D merge items (main-guard only, so tests keep the no-op defaults):
+  startLoopMonitor(); // Spec 08 R12 — one process-wide event-loop-delay histogram, enabled once at boot
+  setOnGatewayFailure(playFallbackAndClose); // Spec 05↔09 fallback seam (FR-7 spoken arm); validated live by the S23 kill test at M1
   const { app, shutdown } = await buildApp(config);
 
   await app.listen({ port: config.port, host: '0.0.0.0' }); // R3.3 — never any other host
