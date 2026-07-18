@@ -30,3 +30,22 @@ export async function fetchToolDefs(client: Client): Promise<RealtimeToolDef[]> 
     return { type: 'function' as const, name: t.name, description: t.description, parameters };
   });
 }
+
+/** function-call-arguments-done → tool output string for conversation-item-create. */
+export async function runTool(client: Client, name: string, argsJson: string): Promise<string> {
+  try {
+    const args = argsJson && argsJson.trim() ? JSON.parse(argsJson) : {};
+    const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 5000 });
+    if (result.isError) {
+      // Server-side tool failure (throw / bad args / unknown tool) — surfaced here, NOT thrown.
+      const msg = (result.content as Array<{ type: string; text?: string }>)
+        .map((c) => c.text ?? '')
+        .join('\n');
+      return JSON.stringify({ error: msg || 'tool failed' });
+    }
+    return JSON.stringify(result); // {content:[{type:'text',text:...}]}
+  } catch (err) {
+    // Transport/protocol-level failure (McpError, fetch error, timeout) — never kill the call.
+    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+  }
+}
