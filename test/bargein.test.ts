@@ -3,9 +3,11 @@
 // "one injectWS-backed test per file" rule (node:test Windows silent-drop bug only bites heavy
 // WS-server suites), so all cases share this one file per the plan.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { bargeIn, pushMark, onMarkEcho } from '../src/bargein.js';
+import { dispatch } from '../src/session.js';
 import { createSession, type Session } from '../src/sessions.js';
+import { createTranscoder } from '../src/dsp.js';
 import type { Experimental_RealtimeModelV4ClientEvent as ClientEvent } from '@ai-sdk/provider';
 
 const OPEN = 1;
@@ -35,19 +37,32 @@ function fakeGateway(): { calls: ClientEvent[]; send: (ev: ClientEvent) => Promi
   };
 }
 
-/** Spy transcoder — only resetOutbound matters to this module (Spec 06 R11/A9 contract). */
-function fakeTranscoder(): { resetCalls: number; resetOutbound: () => void } {
-  const spy = { resetCalls: 0, resetOutbound: () => {} };
+/** Spy transcoder — resetOutbound is what bargeIn()/dispatch() call directly; the two identity
+ *  passthroughs exist only so T10.4's dispatch()-driven tests (which exercise the audio-delta
+ *  outbound-forward path, unlike this file's original T05.1-era bargeIn()-only tests) don't hit
+ *  a missing-method TypeError — DSP itself is out of scope for every test in this file. */
+function fakeTranscoder(): {
+  resetCalls: number;
+  resetOutbound: () => void;
+  gatewayToTwilio: (delta: string) => string;
+  twilioToGateway: (payload: string) => string;
+} {
+  const spy = {
+    resetCalls: 0,
+    resetOutbound: () => {},
+    gatewayToTwilio: (delta: string) => delta,
+    twilioToGateway: (payload: string) => payload,
+  };
   spy.resetOutbound = () => {
     spy.resetCalls += 1;
   };
   return spy;
 }
 
-function makeSession(): Session {
+function makeSession(streamSid = 'MZ1'): Session {
   const socket = fakeSocket();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const session = createSession({ twilioWs: socket as any, streamSid: 'MZ1', callSid: 'CA1', log: () => {} });
+  const session = createSession({ twilioWs: socket as any, streamSid, callSid: 'CA1', log: () => {} });
   session.gateway = fakeGateway() as unknown as Session['gateway'];
   session.transcoder = fakeTranscoder() as unknown as Session['transcoder'];
   return session;
@@ -377,5 +392,280 @@ describe('static A14 (grep companion — see completion report)', () => {
     for (const ev of gatewayCalls(s)) {
       expect((ev as { type: string }).type).not.toBe(redundantCancelEventType);
     }
+  });
+});
+
+// ── T10.4 additions below — Spec 10 R5 event-sequence simulations driven through the real
+// dispatch() loop (src/session.ts), not bargein.ts's exported functions directly. Everything
+// above this line is T05.1-era pure-bargein.ts-level coverage (A7-A14), kept as-is per the plan's
+// "absorbs/extends" instruction. R5.5 (benign-error whitelist) and R5.7 (silent-ignore set) are
+// exhaustively covered per-event-type by test/session-dispatch.test.ts's "dispatch — error
+// policy" and "dispatch — consciously-ignored events" suites already — the two smoke tests below
+// exist only so `npx vitest run test/bargein.test.ts` alone still demonstrates every R5 item
+// without re-deriving that exhaustive list here.
+
+describe('dispatch — R5.1 stale-epoch regression (Spec 10 R5.1 literal script, normative)', () => {
+  it("streamSid MZtest1: r1's 3 deltas all echoed + drain (media->6000) disarms the epoch; r2's first delta re-arms it at 8000; media->8500; speech-started -> clear to Twilio FIRST, THEN truncate(item_b, contentIndex:0, audioEndMs:500), never 7500 (8500-1000)", () => {
+    const socket = fakeSocket();
+    const session = createSession({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      twilioWs: socket as any,
+      streamSid: 'MZtest1',
+      callSid: 'CA-r51',
+      log: () => {},
+    });
+    session.gateway = fakeGateway() as unknown as Session['gateway'];
+    session.transcoder = fakeTranscoder() as unknown as Session['transcoder'];
+
+    // Cross-socket ordering timeline: `clear` goes to the Twilio socket, `truncate` goes to the
+    // gateway socket — two independent arrays in production too (Spec 05 R5 ordering note: "no
+    // cross-ordering exists" between them structurally), so a shared tagged timeline via
+    // wrapping both fakes' `send` is the only way to assert R5.1's literal "clear sent to Twilio
+    // FIRST" wording end to end.
+    const timeline: string[] = [];
+    const origSocketSend = socket.send;
+    socket.send = (data: string) => {
+      if ((JSON.parse(data) as { event: string }).event === 'clear') timeline.push('clear');
+      origSocketSend(data);
+    };
+    const gw = session.gateway as unknown as { send: (ev: ClientEvent) => Promise<void> };
+    const origGwSend = gw.send;
+    gw.send = async (ev: ClientEvent) => {
+      if ((ev as { type: string }).type === 'conversation-item-truncate') timeline.push('truncate');
+      await origGwSend(ev);
+    };
+
+    // r1: response-created, media->1000, three deltas (three marks queued).
+    dispatch(session, { type: 'response-created', responseId: 'r1', raw: {} });
+    session.latestMediaTimestamp = 1000;
+    dispatch(session, { type: 'audio-delta', responseId: 'r1', itemId: 'item_a', delta: 'd1', raw: {} });
+    dispatch(session, { type: 'audio-delta', responseId: 'r1', itemId: 'item_a', delta: 'd2', raw: {} });
+    dispatch(session, { type: 'audio-delta', responseId: 'r1', itemId: 'item_a', delta: 'd3', raw: {} });
+    expect(session.markQueue.length).toBe(3);
+
+    // Echo every emitted mark back -> queue drains -> epoch MUST disarm (R4 rule 3).
+    for (const name of [...session.markQueue]) onMarkEcho(session, name);
+    expect(session.markQueue).toEqual([]);
+    expect(session.responseStartTimestamp).toBe(null);
+    session.latestMediaTimestamp = 6000;
+
+    // r2: response-created, media->8000, two deltas (epoch re-arms at 8000 — NOT 1000, NOT 6000).
+    dispatch(session, { type: 'response-created', responseId: 'r2', raw: {} });
+    session.latestMediaTimestamp = 8000;
+    dispatch(session, { type: 'audio-delta', responseId: 'r2', itemId: 'item_b', delta: 'd4', raw: {} });
+    dispatch(session, { type: 'audio-delta', responseId: 'r2', itemId: 'item_b', delta: 'd5', raw: {} });
+    expect(session.responseStartTimestamp).toBe(8000);
+
+    session.latestMediaTimestamp = 8500;
+    dispatch(session, { type: 'speech-started', raw: {} });
+
+    expect(timeline).toEqual(['clear', 'truncate']); // clear to Twilio strictly before truncate to gateway
+
+    const gwCalls = (session.gateway as unknown as { calls: ClientEvent[] }).calls;
+    const truncateCalls = gwCalls.filter((c) => (c as { type: string }).type === 'conversation-item-truncate');
+    expect(truncateCalls.length).toBe(1);
+    const truncate = truncateCalls[0] as unknown as { itemId: string; contentIndex: number; audioEndMs: number };
+    expect(truncate.itemId).toBe('item_b');
+    expect(truncate.contentIndex).toBe(0);
+    expect(truncate.audioEndMs).toBe(500); // 8500 - 8000
+    expect(truncate.audioEndMs).not.toBe(7500); // the stale-epoch bug value (8500 - 1000)
+
+    // R5.2 (same script): no response-cancel ever sent across the whole exchange (server-vad
+    // interrupt_response already cancelled; C3 decision).
+    const redundantCancelEventType = ['response', 'cancel'].join('-');
+    expect(gwCalls.some((c) => (c as { type: string }).type === redundantCancelEventType)).toBe(false);
+  });
+});
+
+describe('dispatch — R5.3 guard no-ops (event-sequence via dispatch, not bargein.ts directly)', () => {
+  it('speech-started with empty markQueue and disarmed epoch (turn 1 / post-playback / tool gap) sends nothing on either socket', () => {
+    const s = makeSession();
+
+    dispatch(s, { type: 'speech-started', raw: {} });
+
+    expect(socketSent(s)).toEqual([]);
+    expect(gatewayCalls(s)).toEqual([]);
+  });
+
+  it('a second speech-started in the same response (after the first effective barge-in) no-ops until the NEXT response first delta re-arms', () => {
+    const s = makeSession();
+
+    dispatch(s, { type: 'response-created', responseId: 'A', raw: {} });
+    s.latestMediaTimestamp = 100;
+    dispatch(s, { type: 'audio-delta', responseId: 'A', itemId: 'itemA', delta: 'd1', raw: {} });
+    s.latestMediaTimestamp = 150;
+    dispatch(s, { type: 'speech-started', raw: {} }); // effective: clear + truncate
+
+    const sentAfterFirst = socketSent(s).length;
+    const gwAfterFirst = gatewayCalls(s).length;
+    expect(gwAfterFirst).toBe(1);
+
+    // `bargeIn()` itself never touches `responseActive` (only `response-done` does, R10) — the
+    // guard's `!responseActive` half only goes true once the server-vad auto-cancel's
+    // `response-done` for the barged-in response arrives (same production dependency the
+    // existing "A11 multiple barge-ins" test above documents by flipping the flag by hand).
+    dispatch(s, { type: 'response-done', responseId: 'A', status: 'cancelled', raw: {} });
+
+    // Same response, no new delta, now disarmed: state is disarmed -> no-op.
+    dispatch(s, { type: 'speech-started', raw: {} });
+    expect(socketSent(s).length).toBe(sentAfterFirst);
+    expect(gatewayCalls(s).length).toBe(gwAfterFirst);
+
+    // Next response's first delta re-arms the epoch; barge-in fires again.
+    dispatch(s, { type: 'response-created', responseId: 'B', raw: {} });
+    s.latestMediaTimestamp = 220;
+    dispatch(s, { type: 'audio-delta', responseId: 'B', itemId: 'itemB', delta: 'd2', raw: {} });
+    s.latestMediaTimestamp = 260;
+    dispatch(s, { type: 'speech-started', raw: {} });
+
+    expect(gatewayCalls(s).length).toBe(gwAfterFirst + 1);
+    const truncate = gatewayCalls(s)[gwAfterFirst] as unknown as { itemId: string; audioEndMs: number };
+    expect(truncate.itemId).toBe('itemB');
+    expect(truncate.audioEndMs).toBe(40); // 260 - 220
+  });
+});
+
+describe('dispatch — R5.4 array-frame contract (session-level ordering; array-splitting locus is src/gateway.ts, see test/gateway.leg.test.ts "A6 array frames")', () => {
+  it('feeding the two-event array payload through dispatch, in order, applies both events in order', () => {
+    const s = makeSession();
+
+    // Exact payload from Spec 10 R5.4: one JSON array of [response-created, audio-delta]. The
+    // array-SPLITTING itself is gateway.ts's job (Spec 05 R2 preamble: "gateway.ts... handles
+    // single-event AND array frames... deliver every normalized event to callbacks.onEvent") and
+    // is already covered end-to-end (real WS round trip, ordering + log line asserted) by
+    // gateway.leg.test.ts's "handles an array frame" test. What THIS test proves is dispatch()'s
+    // own side: it is agnostic to framing and produces the correct end state when fed the same
+    // two events in the same order, one at a time.
+    const events = [
+      { type: 'response-created' as const, responseId: 'r3', raw: {} },
+      { type: 'audio-delta' as const, responseId: 'r3', itemId: 'i3', delta: 'AAAA', raw: {} },
+    ];
+    for (const ev of events) dispatch(s, ev);
+
+    expect(s.currentResponseId).toBe('r3');
+    expect(s.lastAssistantItemId).toBe('i3');
+    expect(s.markQueue.length).toBe(1); // the delta's mark was pushed -> both events landed, in order
+  });
+});
+
+describe('dispatch — R5.5 benign-error whitelist (smoke; exhaustive per-code coverage in test/session-dispatch.test.ts "dispatch — error policy")', () => {
+  it('a whitelisted code (response_cancel_not_active) logs warn and does not teardown', () => {
+    const s = makeSession();
+    let tornDown = 0;
+    s.teardown = () => {
+      tornDown += 1;
+    };
+    const warnLines: Array<{ level: string }> = [];
+    s.log = (level) => {
+      warnLines.push({ level });
+    };
+
+    dispatch(s, { type: 'error', message: 'no active response to cancel', code: 'response_cancel_not_active', raw: {} });
+
+    expect(warnLines.some((l) => l.level === 'warn')).toBe(true);
+    expect(tornDown).toBe(0);
+  });
+
+  it('an unknown code invokes the FR-7 teardown path', () => {
+    const s = makeSession();
+    const teardownCalls: string[] = [];
+    s.teardown = (reason: string) => {
+      teardownCalls.push(reason);
+    };
+
+    dispatch(s, { type: 'error', message: 'totally unrecognized failure', code: 'some_unknown_code', raw: {} });
+
+    expect(teardownCalls).toEqual(['gateway-error']);
+  });
+});
+
+describe('dispatch — R5.6 DSP reset seam with the REAL transcoder (createTranscoder("transcode"), per the Consumes contract)', () => {
+  it('resetOutbound is invoked on response-created and on an effective bargeIn; the inbound Upsampler3x has no reset method at all (structural guarantee, not just an untested call site)', () => {
+    const socket = fakeSocket();
+    const session = createSession({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      twilioWs: socket as any,
+      streamSid: 'MZ1',
+      callSid: 'CA-dsp',
+      log: () => {},
+    });
+    session.gateway = fakeGateway() as unknown as Session['gateway'];
+    const realTranscoder = createTranscoder('transcode');
+    session.transcoder = realTranscoder;
+    const resetSpy = vi.spyOn(realTranscoder, 'resetOutbound');
+
+    dispatch(session, { type: 'response-created', responseId: 'r1', raw: {} });
+    expect(resetSpy).toHaveBeenCalledTimes(1); // call site 1 of 2 (Spec 06 R11.2)
+
+    session.latestMediaTimestamp = 100;
+    // 960 zero bytes = PCM24K_BYTES_PER_20MS (dsp.ts) — a realistic gateway audio-delta payload
+    // for the REAL downsampler to chew on, not a fake string.
+    dispatch(session, {
+      type: 'audio-delta',
+      responseId: 'r1',
+      itemId: 'item1',
+      delta: Buffer.alloc(960).toString('base64'),
+      raw: {},
+    });
+    session.latestMediaTimestamp = 150;
+    dispatch(session, { type: 'speech-started', raw: {} }); // effective bargeIn
+
+    expect(resetSpy).toHaveBeenCalledTimes(2); // call site 2 of 2 (Spec 06 R11.2 / bargeIn step 4)
+
+    // The inbound leg (Upsampler3x) is never reset mid-call — enforced structurally, not just by
+    // convention: src/dsp.ts's Transcoder interface exposes exactly one reset method
+    // (resetOutbound), and Upsampler3x itself has no reset() at all ("Deliberately has NO reset
+    // method... must never be reset mid-call", src/dsp.ts). There is no call site to spy on
+    // because the type system offers none.
+    expect((realTranscoder as unknown as { resetInbound?: unknown }).resetInbound).toBeUndefined();
+  });
+});
+
+describe('dispatch — R5.7 silent-ignore set (smoke; exhaustive per-event-type coverage in test/session-dispatch.test.ts "dispatch — consciously-ignored events")', () => {
+  it('conversation-item-added, output-item-done, content-part-added/done, audio-done, text-delta/done, function-call-arguments-delta: no warn, no throw', () => {
+    const s = makeSession();
+    const logs: unknown[] = [];
+    s.log = (level, message, fields) => {
+      logs.push({ level, message, fields });
+    };
+    const ignored = [
+      { type: 'conversation-item-added', itemId: 'i1', item: {}, raw: {} },
+      { type: 'output-item-done', responseId: 'r1', itemId: 'i1', raw: {} },
+      { type: 'content-part-added', responseId: 'r1', itemId: 'i1', raw: {} },
+      { type: 'content-part-done', responseId: 'r1', itemId: 'i1', raw: {} },
+      { type: 'audio-done', responseId: 'r1', itemId: 'i1', raw: {} },
+      { type: 'text-delta', responseId: 'r1', itemId: 'i1', delta: 'hi', raw: {} },
+      { type: 'text-done', responseId: 'r1', itemId: 'i1', text: 'hi', raw: {} },
+      { type: 'function-call-arguments-delta', responseId: 'r1', itemId: 'i1', callId: 'c1', delta: '{', raw: {} },
+    ] as const;
+
+    for (const ev of ignored) {
+      expect(() => dispatch(s, ev as Parameters<typeof dispatch>[1])).not.toThrow();
+    }
+    expect(logs).toEqual([]);
+  });
+});
+
+describe('dispatch — greeting barge-in (Spec 05 R5 edge case: "the same machinery applies with zero special casing")', () => {
+  it('a caller interrupting the greeting response (no preceding speech-stopped, turn 0) barges in exactly like any other response', () => {
+    const s = makeSession();
+
+    // The greeting flows through dispatch with no speech-stopped ever having fired — Spec 04
+    // owns sending its response-create; this test only proves bargeIn's machinery doesn't
+    // special-case the absence of a preceding turn.
+    dispatch(s, { type: 'response-created', responseId: 'greet', raw: {} });
+    s.latestMediaTimestamp = 200;
+    dispatch(s, { type: 'audio-delta', responseId: 'greet', itemId: 'greetItem', delta: 'g1', raw: {} });
+    s.latestMediaTimestamp = 350;
+
+    dispatch(s, { type: 'speech-started', raw: {} });
+
+    const clearFrames = socketSent(s).filter((m) => (JSON.parse(m) as { event: string }).event === 'clear');
+    expect(clearFrames.length).toBe(1);
+    const truncateCalls = gatewayCalls(s).filter((c) => (c as { type: string }).type === 'conversation-item-truncate');
+    expect(truncateCalls.length).toBe(1);
+    expect((truncateCalls[0] as unknown as { itemId: string; audioEndMs: number }).itemId).toBe('greetItem');
+    expect((truncateCalls[0] as unknown as { audioEndMs: number }).audioEndMs).toBe(150); // 350 - 200
+    expect(s.markQueue).toEqual([]); // flushed, same as any other barge-in
   });
 });
