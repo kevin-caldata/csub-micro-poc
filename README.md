@@ -51,3 +51,12 @@ work, not this task._
 | date | AUDIO_MODE tested | session-updated.raw excerpt | audible OK? | decision |
 |---|---|---|---|---|
 | | | | | |
+
+## Dependencies
+
+Test-runner pin resolved at T10.1 scaffold time (Spec 10 R1 — no findings doc pins a
+version ahead of time):
+
+| package | version | pin type | why |
+|---|---|---|---|
+| vitest | 4.1.10 | exact (`--save-exact`, repo-wide via `.npmrc`) | test runner; `environment: 'node'` mandatory — findings/01 gotcha 6, findings/10 G6 |
