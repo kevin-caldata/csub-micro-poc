@@ -111,9 +111,9 @@ Wave-end merge (orchestrator-applied, gated on spike S23): one-line wiring `play
 | T10.3 | 10-testing-milestones/03-dsp-and-tool-mapping-suites.md | T10.1, T06, T07 | OK | 0fe47ad | clean; Spec 10 R3.6 prose says floor(n/3), actual (correct) is ceil for non-multiples — spec-text nit, code right |
 | T10.4 | 10-testing-milestones/04-bargein-and-marks-suites.md | T10.1, T03, T05 | OK | ff82d96 | clean; R5.1 literal script passed first run (audioEndMs 500, never 7500); R6 mark suites; 332 tests |
 | T10.5 | 10-testing-milestones/05-gateway-override-and-fakes.md | T10.1, T02, T03, T04 | OK | b643671+b76147b | clean; GATEWAY_WS_URL bypasses only socket construction — T10.6 must inject fake mint via TwimlDeps.mint (no live network) |
-| T10.6 | 10-testing-milestones/06-integration-harness.md | T10.5, T05, T07 | D | | |
+| T10.6 | 10-testing-milestones/06-integration-harness.md | T10.5, T05, T07 | OK | de9bd44+293395c | deep review APPROVED (real-vs-fake boundary verified against production source); Minors for final review: burst audioEndMs<=2000 wall-clock margin, over-promising test title, none blocking |
 | T10.7 | 10-testing-milestones/07-concurrency-probe-and-report-skeletons.md | T10.1, T04 | OK | 5f52f46 | clean; probe dry-run verified; README S-table (35 rows) + M1 stubs + M5 skeleton in place, empty pending live data |
-| T10.8 | 10-testing-milestones/08-milestone-execution-m1-m5.md | T10.1–T10.7, T09 | - | | HUMAN-IN-THE-LOOP; may return PART per milestone |
+| T10.8 | 10-testing-milestones/08-milestone-execution-m1-m5.md | T10.1–T10.7, T09 | PART | 8c80979 | offline pre-flight complete: docs/M1-M5-EXECUTION-CHECKLIST.md written, all preconditions verified; live halves await human (M1-M5); note: RUNBOOK §8 spike table vs LEDGER register — LEDGER is authoritative |
 
 ---
 
