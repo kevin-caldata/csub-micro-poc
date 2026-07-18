@@ -9,8 +9,14 @@ import {
   GatewayFailedDependencyError,
   GatewayForbiddenError,
 } from '@ai-sdk/gateway';
+import WebSocket from 'ws';
+import type {
+  Experimental_RealtimeModelV4ClientEvent as ClientEvent,
+  Experimental_RealtimeModelV4ServerEvent as ServerEvent,
+  Experimental_RealtimeModelV4ToolDefinition as ToolDefinition,
+} from '@ai-sdk/provider';
 import type { AppConfig } from './config.js';
-import { logEvent } from './logger.js';
+import { logEvent, ms, now } from './logger.js';
 
 /**
  * Result of a successful `mintRealtimeToken` call.
@@ -108,4 +114,203 @@ export async function mintRealtimeToken(
     }
     throw new GatewayMintError(errorType, statusCode, getTokenMs, cause);
   }
+}
+
+/**
+ * Callback surface Spec 05's Session consumes for the lifetime of one gateway WS leg
+ * (Spec 04 R5, verbatim). `onOpenFailed` and `onClose` are mutually exclusive terminal
+ * signals — exactly one of them fires, ever, per `GatewayLeg`.
+ */
+export interface GatewayLegCallbacks {
+  /** WS open. In this task (T04.3) no frames are sent automatically; T04.4 sends session-update here. */
+  onOpen(): void;
+  /** Handshake refused (non-101 upgrade) or timed out — FR-7 path. `onClose` will NOT also fire. */
+  onOpenFailed(info: { statusCode?: number; message: string }): void;
+  /** Every normalized server event, forwarded as-is (T04.5 builds the full dispatch table). */
+  onEvent(ev: ServerEvent): void;
+  /** ALWAYS terminal for the call once it fires (Spec 04 R11) — `onOpenFailed` will NOT also fire. */
+  onClose(info: { code: number; reason: string }): void;
+}
+
+/**
+ * Options for `openGatewayLeg` (Spec 04 R5) plus one amendment: `config: AppConfig` is added —
+ * same no-singleton rationale as T04.2's `mintRealtimeToken(cfg, ...)` (Spec 01 R5 forbids a
+ * config singleton; the R5 snippet reads `config.*` from ambient scope, which this repo's
+ * `loadConfig()` does not provide). Recorded as deviation-by-design in the completion report.
+ */
+export interface OpenGatewayLegOptions {
+  mint: MintResult;
+  callSid: string; // for structured log lines
+  tools: ToolDefinition[]; // from MCP listTools, already mapped by Spec 07 — passed through untouched here
+  formats: { inputAudioFormat: Record<string, unknown>; outputAudioFormat: Record<string, unknown> };
+  // from Spec 06's audioFormatsFor(config.audioMode); unused by T04.3's openGatewayLeg body
+  // (no session-update is sent yet — see T04.4), but part of the stable public signature.
+  config: AppConfig; // deviation-by-design (see interface doc above)
+  callbacks: GatewayLegCallbacks;
+}
+
+/** Public handle for one gateway WS leg (Spec 04 R5, verbatim). One `GatewayLeg` per call. */
+export interface GatewayLeg {
+  send(ev: ClientEvent): Promise<void>; // R6 helper — Session uses this for truncate/item-create/response-create
+  appendAudio(base64: string): Promise<void>; // hot path: send({type:'input-audio-append', audio}) with OPEN guard
+  readonly isOpen: boolean; // gw.readyState === WebSocket.OPEN
+  close(code?: number, reason?: string): void; // default close(1000, 'call ended')
+}
+
+/**
+ * The mandatory `ws` client options for the gateway leg (Spec 04 R4, findings/08 V5/gotcha 11).
+ * Pure + exported so A2 is unit-testable against a recorded options object; `openGatewayLeg`
+ * MUST construct its `WebSocket` with exactly this helper's output.
+ */
+export function gatewayWsOptions(
+  cfg: AppConfig,
+): { perMessageDeflate: false; handshakeTimeout: number; maxPayload: number } {
+  return {
+    perMessageDeflate: false, // ws client default is ON — must disable (findings/08 V5)
+    handshakeTimeout: cfg.gatewayHandshakeTimeoutMs, // no ws default; unset hangs ~75-130s (findings/08 gotcha 11)
+    maxPayload: 16 * 1024 * 1024, // >> gateway's 256 KB message cap (findings/08 snippet)
+  };
+}
+
+/**
+ * Opens and owns one gateway-leg `ws` client connection (Spec 04 R4/R5/R6/R11/R12).
+ *
+ * This task (T04.3) implements construction, the lifecycle/terminal-signal contract, typed
+ * send/receive plumbing (including array-frame normalization), and the optional keepalive
+ * ping. It deliberately does NOT send `session-update`/`response-create` on `'open'` — that
+ * belongs to T04.4 (Spec 04 R8); `handleEvent` here only forwards to `callbacks.onEvent`,
+ * T04.5 builds the full 23-event dispatch table (Spec 04 R9/R10).
+ */
+export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
+  const { mint, callSid, config, callbacks } = opts;
+
+  const rt = gateway.experimental_realtime(config.modelId);
+  const wsCfg = rt.getWebSocketConfig({ token: mint.token, url: mint.url });
+  const gw = new WebSocket(wsCfg.url, wsCfg.protocols, gatewayWsOptions(config));
+
+  const t0 = now();
+  let opened = false;
+  let terminal = false; // true once onOpenFailed or onClose has fired — enforces R5 mutual exclusivity
+  let upgradeStatusCode: number | undefined;
+  let pingTimer: NodeJS.Timeout | undefined;
+
+  // Attach ALL listeners synchronously at construction — an unhandled 'error' crashes the
+  // process and kills every concurrent call (findings/08 gotcha 10).
+  gw.on('open', () => {
+    opened = true;
+    logEvent({
+      level: 'info',
+      message: 'gateway-open',
+      event: 'gateway-open',
+      callSid,
+      sinceMintMs: ms(t0, now()), // Δ from leg construction (Spec 04 R13's "Δ from mint")
+    });
+    if (config.gatewayPingSeconds > 0) {
+      // R12: diagnostics-only keepalive, never load-bearing. Started on 'open', cleared on 'close'.
+      pingTimer = setInterval(() => {
+        if (gw.readyState === WebSocket.OPEN) gw.ping();
+      }, config.gatewayPingSeconds * 1000);
+    }
+    callbacks.onOpen();
+  });
+
+  gw.on('unexpected-response', (_req, res) => {
+    // Non-101 handshake answer (bad/expired/reused vcst_ token, possibly concurrency rejection).
+    // ws quirk NOT stated by findings/08's snippet: `EventEmitter.emit` reports "handled" as
+    // soon as ANY 'unexpected-response' listener exists, which suppresses ws's own automatic
+    // abortHandshake call — attaching this listener means WE must terminate the socket
+    // ourselves, or the connection hangs open in CONNECTING state forever (verified against
+    // ws@8.21.1 source, lib/websocket.js: `!websocket.emit('unexpected-response', ...)`).
+    upgradeStatusCode = res.statusCode;
+    logEvent({
+      level: 'error',
+      message: 'gateway-upgrade-refused',
+      event: 'gateway-upgrade-refused',
+      callSid,
+      statusCode: res.statusCode,
+    });
+    if (!terminal) {
+      terminal = true;
+      callbacks.onOpenFailed({ statusCode: res.statusCode, message: `Unexpected server response: ${res.statusCode}` });
+    }
+    gw.terminate(); // triggers 'error' + 'close' for cleanup; both are no-ops now that terminal=true
+  });
+
+  gw.on('error', (err: Error) => {
+    if (!opened && !terminal) {
+      // Handshake timed out (no unexpected-response — e.g. a black-holed connect) before 'open'.
+      terminal = true;
+      callbacks.onOpenFailed({ statusCode: upgradeStatusCode, message: err.message });
+      return;
+    }
+    if (opened && !terminal) {
+      // 'error' after open: log only — teardown happens only in 'close', which always follows
+      // (findings/08 error/close-code matrix).
+      logEvent({ level: 'error', message: 'gateway-ws-error', event: 'gateway-ws-error', callSid, error: err.message });
+    }
+    // else: terminal already set (e.g. our own gw.terminate() cleanup above) — ignore.
+  });
+
+  gw.on('close', (code: number, reasonBuf: Buffer) => {
+    if (pingTimer !== undefined) clearInterval(pingTimer);
+    const reason = reasonBuf.toString(); // reason is a Buffer (findings/08 gotcha 9) — decode before logging
+    logEvent({ level: 'info', message: 'gateway-close', event: 'gateway-close', callSid, code, reason });
+    if (!terminal) {
+      terminal = true;
+      callbacks.onClose({ code, reason });
+    }
+  });
+
+  gw.on('message', (data: WebSocket.RawData, isBinary: boolean) => {
+    if (isBinary) return; // the gateway protocol is text JSON only
+    let parsed: ServerEvent | ServerEvent[];
+    try {
+      parsed = rt.parseServerEvent(JSON.parse(data.toString())) as ServerEvent | ServerEvent[];
+    } catch {
+      logEvent({
+        level: 'error',
+        message: 'gateway-parse-error',
+        event: 'gateway-parse-error',
+        callSid,
+        snippet: data.toString().slice(0, 200),
+      });
+      return;
+    }
+    // parseServerEvent may return ONE event or an ARRAY — handle both (findings/02 claim 4, S13).
+    const events = Array.isArray(parsed) ? parsed : [parsed];
+    if (Array.isArray(parsed)) {
+      logEvent({ level: 'info', message: 'gateway-array-frame', event: 'gateway-array-frame', callSid, count: events.length });
+    }
+    for (const ev of events) handleEvent(ev);
+  });
+
+  function handleEvent(ev: ServerEvent): void {
+    // T04.3 scope ends here; T04.5 inserts the full R9/R10 dispatch table before this forward.
+    callbacks.onEvent(ev);
+  }
+
+  async function send(ev: ClientEvent): Promise<void> {
+    if (gw.readyState !== WebSocket.OPEN) return; // post-terminal / pre-open guard: silent no-op
+    gw.send(JSON.stringify(await rt.serializeClientEvent(ev))); // ALWAYS await — typed unknown | PromiseLike<unknown>
+  }
+
+  async function appendAudio(base64: string): Promise<void> {
+    // One input-audio-append per call — never batch (Spec 04 R6; 256 KB cap rejects the message silently).
+    await send({ type: 'input-audio-append', audio: base64 });
+  }
+
+  function close(code = 1000, reason = 'call ended'): void {
+    if (gw.readyState === WebSocket.OPEN || gw.readyState === WebSocket.CONNECTING) {
+      gw.close(code, reason);
+    }
+  }
+
+  return {
+    send,
+    appendAudio,
+    get isOpen() {
+      return gw.readyState === WebSocket.OPEN;
+    },
+    close,
+  };
 }
