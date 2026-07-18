@@ -222,7 +222,7 @@ M4 exit gate: FR-3, FR-7, FR-8 pass; S24 number + locus recorded; S25/S26/S27 re
 
 ### M5 — findings report
 
-**R25.** Data pipeline: all cross-call percentiles are computed **offline** by Spec 08's `scripts/aggregate-latency.mjs` over the extracted `@event:turn` JSONL (input: file(s) of log lines; output: p50/p95/max/n per metric, split by `bargedIn:false` and by audio mode) — never by averaging per-call p50s [findings/09 §7, gotcha 13]. Turns where barge-in preceded first audio are excluded from TTFB stats; `bargedIn` tagging enables both cuts [findings/09 §2 edge cases].
+**R25.** Data pipeline: all cross-call percentiles are computed **offline** by Spec 08's `scripts/aggregate-latency.mjs` over the extracted `@event:turn` JSONL (input: file(s) of log lines; output: p50/p95/max/n per metric, partitioned by `bargedIn` and `ttfbMs` presence per Spec 08 R16 — the script does NOT partition by audio mode; the pcmu-vs-transcode comparison comes from running it once per measurement-session directory, since each session runs a single `AUDIO_MODE` recorded in its `notes.md` per Spec 08 R14) — never by averaging per-call p50s [findings/09 §7, gotcha 13]. Turns where barge-in preceded first audio are excluded from TTFB stats; `bargedIn` tagging enables both cuts [findings/09 §2 edge cases].
 
 **R26.** `README.md` gains this skeleton (fill at M5; the section headers are normative):
 
