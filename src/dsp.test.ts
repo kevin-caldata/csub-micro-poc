@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
 import {
   MULAW_DEC,
   MULAW_ENC,
@@ -119,6 +120,46 @@ function maxAbsDiff(a: Int16Array, b: Int16Array): number {
     if (d > max) max = d;
   }
   return max;
+}
+
+/** Least-squares-projects `y` (sampled at `fs`) onto `A*sin(2*pi*freqHz*n/fs) + B*cos(...)`
+ *  over n in [0, y.length), then reports the projected amplitude and THD+N in dB
+ *  (10*log10(projected power / residual power)). Because `A*sin(wn)+B*cos(wn)` represents
+ *  a sinusoid at `freqHz` of ARBITRARY amplitude and phase, this projection is immune to
+ *  any fixed (or fractional) group delay the resampler cascade introduces — unlike a naive
+ *  sample-shifted difference, which the fractional 47-sample@24k cascade delay would make
+ *  falsely report ~4 dB (Spec 06 R12.5, findings/06 gotcha 8, test 4). */
+function projectTone(
+  y: Int16Array,
+  freqHz: number,
+  fs: number,
+): { amplitude: number; thdnDb: number } {
+  const w = (2 * Math.PI * freqHz) / fs;
+  let Sss = 0, Scc = 0, Ssc = 0, Sys = 0, Syc = 0;
+  for (let n = 0; n < y.length; n++) {
+    const s = Math.sin(w * n);
+    const c = Math.cos(w * n);
+    Sss += s * s;
+    Scc += c * c;
+    Ssc += s * c;
+    Sys += y[n] * s;
+    Syc += y[n] * c;
+  }
+  const det = Sss * Scc - Ssc * Ssc;
+  const A = (Scc * Sys - Ssc * Syc) / det;
+  const B = (Sss * Syc - Ssc * Sys) / det;
+
+  let projPower = 0, residPower = 0;
+  for (let n = 0; n < y.length; n++) {
+    const proj = A * Math.sin(w * n) + B * Math.cos(w * n);
+    const resid = y[n] - proj;
+    projPower += proj * proj;
+    residPower += resid * resid;
+  }
+  return {
+    amplitude: Math.sqrt(A * A + B * B),
+    thdnDb: 10 * Math.log10(projPower / residPower),
+  };
 }
 
 /** Cycles a chunk-size pattern until `total` samples are consumed (last chunk clipped to fit). */
@@ -446,5 +487,90 @@ describe('Transcoder.resetOutbound (transcode mode) — R11 / A7', () => {
     // if resetOutbound() had incorrectly reset the inbound upsampler too, in2 would equal
     // freshFirstChunk exactly.
     assert.notEqual(in2, freshFirstChunk);
+  });
+});
+
+// ---- T06.4: tone-fidelity (THD+N) projection test + per-frame perf guard ----
+// Verbatim methodology per Spec 06 R12.5/R12.6 and findings/06 §Test strategy tests 4 & 6,
+// §C10, §C12, gotcha 8. Deterministic fixed-frequency sines only, no RNG.
+
+describe('Tone fidelity — least-squares projection THD+N (R12.5 / A1)', () => {
+  const AMPLITUDE = 8000;
+  const FS_8K = 8000;
+  // 0.5 s @ 8 kHz: even the lowest test tone (300 Hz) gets 150 full cycles, far more than
+  // enough for a stable least-squares fit; short enough to keep the suite fast.
+  const N8K = 4000;
+  // Skip the filter warm-up head before projecting: the 48-tap cascade's impulse response
+  // settles within ~16 samples per stage (upsample + downsample), so 50 samples @8k is a
+  // generous margin (findings/06 §Test strategy test 4: "skip the steady-state region").
+  const WARMUP_8K = 50;
+
+  for (const freqHz of [300, 1000, 2000, 3000]) {
+    it(`f=${freqHz} Hz: THD+N >= 60 dB after fresh 8k->24k->8k round trip`, () => {
+      const input = generateSine(freqHz, AMPLITUDE, N8K, FS_8K);
+      // Fresh instances per Spec 06 R12.5 — no state carried in from other tests.
+      const up = new Upsampler3x();
+      const down = new Downsampler3x();
+      const pcm24 = up.process(input);
+      const roundTripped = down.process(pcm24);
+
+      const steady = roundTripped.subarray(WARMUP_8K);
+      const { amplitude, thdnDb } = projectTone(steady, freqHz, FS_8K);
+
+      assert.ok(
+        thdnDb >= 60,
+        `THD+N ${thdnDb.toFixed(1)} dB is below the 60 dB floor at ${freqHz} Hz (Spec 06 R12.5)`,
+      );
+
+      // Gain check applies only below 3000 Hz per Spec 06 R12.5 (the combined cascade's
+      // -0.4 dB/stage rolloff right at 3 kHz is measured/expected — findings/06 C12).
+      if (freqHz < 3000) {
+        const gainDb = 20 * Math.log10(amplitude / AMPLITUDE);
+        assert.ok(
+          Math.abs(gainDb) <= 1,
+          `gain ${gainDb.toFixed(2)} dB exceeds +/-1 dB at ${freqHz} Hz (Spec 06 R12.5)`,
+        );
+      }
+    });
+  }
+});
+
+describe('Per-frame perf budget — full production round trip (R12.6 / A1)', () => {
+  it('twilioToGateway + gatewayToTwilio on one createTranscoder("transcode") instance average < 500 microseconds per frame', () => {
+    const sinePcm8 = generateSine(1000, 8000, MULAW_BYTES_PER_20MS, 8000);
+    const inboundPayloadB64 = base64FromBytes(muLawEncodeBytes(sinePcm8));
+
+    const sinePcm24 = generateSine(1000, 8000, PCM24K_SAMPLES_PER_20MS, 24000);
+    const outboundDeltaB64 = base64FromInt16(sinePcm24);
+
+    // One instance owns both directions' state, exactly as Spec 05 wires it per-call
+    // (Spec 06 R12.6: "full production round trip ... using one createTranscoder instance").
+    const t = createTranscoder('transcode');
+
+    const WARMUP_ITERATIONS = 200;
+    const TIMED_ITERATIONS = 2000;
+
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      t.twilioToGateway(inboundPayloadB64);
+      t.gatewayToTwilio(outboundDeltaB64);
+    }
+
+    const start = performance.now();
+    for (let i = 0; i < TIMED_ITERATIONS; i++) {
+      t.twilioToGateway(inboundPayloadB64);
+      t.gatewayToTwilio(outboundDeltaB64);
+    }
+    const elapsedMs = performance.now() - start;
+    const usPerFrame = (elapsedMs * 1000) / TIMED_ITERATIONS;
+
+    // Recorded for the M5/S26 ledger row (Railway shared-vCPU multiplier vs this desktop
+    // baseline) — findings/06 C10 measured 21.4 us/frame; the 500 us budget is a ~23x
+    // margin absorbing CI/shared-vCPU variance (Spec 06 R12.6, master plan T5/S26).
+    console.log(`[T06.4 perf] measured mean round trip: ${usPerFrame.toFixed(2)} us/frame`);
+
+    assert.ok(
+      usPerFrame < 500,
+      `measured ${usPerFrame.toFixed(2)} us/frame exceeds the 500 us/frame budget (Spec 06 R12.6)`,
+    );
   });
 });
