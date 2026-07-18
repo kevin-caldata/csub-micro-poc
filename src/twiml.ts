@@ -2,7 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import twilio from 'twilio'; // default-import + destructure: safe under both ESM and CJS emit (twilio is a CJS package)
 const { validateRequest } = twilio;
-import { gateway } from '@ai-sdk/gateway';
+import { mintRealtimeToken } from './gateway.js';
 import type { AppConfig } from './config.js';
 import { logEvent } from './logger.js';
 
@@ -49,15 +49,14 @@ export function sweepPendingCalls(now: number = Date.now()): void {
   }
 }
 
-export type MintFn = (modelId: string) => Promise<{ token: string; url: string; expiresAt?: number }>;
+export type MintFn = (
+  modelId: string,
+  callSid?: string,
+) => Promise<{ token: string; url: string; expiresAt?: number }>;
 
 export interface TwimlDeps {
   mint?: MintFn;
 }
-
-// --- gateway mint (Wave B/C merge point: delegate to mintRealtimeToken from ./gateway.js once Spec 04 lands) ---
-const defaultMint: MintFn = (modelId) =>
-  gateway.experimental_realtime.getToken({ model: modelId, expiresAfterSeconds: 600 });
 
 /**
  * Registers POST /twiml (signature-validated per Spec 02 R5.1, mint kick-off per R5.3, TwiML
@@ -65,7 +64,10 @@ const defaultMint: MintFn = (modelId) =>
  * Spec 02 R6's one-arg illustration — config is injected here, never re-loaded (planned deviation).
  */
 export function registerTwimlRoutes(app: FastifyInstance, config: AppConfig, deps?: TwimlDeps): void {
-  const mint = deps?.mint ?? defaultMint;
+  // Wave B/C merge point applied: /twiml delegates to Spec 04's mintRealtimeToken
+  // (typed errors + getTokenMs logging), adapter form per ledger pre-declared deviation.
+  const mint: MintFn =
+    deps?.mint ?? ((modelId, callSid) => mintRealtimeToken(config, callSid ?? '', modelId));
 
   app.post('/twiml', async (req, reply) => {
     sweepPendingCalls();
@@ -97,7 +99,7 @@ export function registerTwimlRoutes(app: FastifyInstance, config: AppConfig, dep
 
     const callToken = randomUUID(); // 36 chars — far under the 500-char <Parameter> name+value limit
     const t0 = Date.now();
-    const gatewayAuth = mint(config.modelId);
+    const gatewayAuth = mint(config.modelId, params.CallSid);
     gatewayAuth
       .then(({ expiresAt }) => {
         logEvent({
