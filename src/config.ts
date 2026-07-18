@@ -25,6 +25,12 @@ const EnvSchema = z.object({
   WAIT_FOR_SESSION_UPDATED: z.enum(['true', 'false']).default('false').transform(v => v === 'true'),
   GATEWAY_TAGS: z.string().optional(),
   TWILIO_VALIDATE_UPGRADE: z.enum(['true', 'false']).default('false'),
+  // Spec 10 R10 (test harness only): when set, src/gateway.ts's openGatewayLeg skips
+  // mintRealtimeToken/getWebSocketConfig entirely and opens a bare WS straight at this URL — the
+  // seam that lets test/fakes/fake-gateway.ts stand in for the real Vercel AI Gateway with zero
+  // network access. No validation beyond "it's a string" (absent = undefined); never set in
+  // production. Additive-only per master plan §6 R-2 — no existing key touched.
+  GATEWAY_WS_URL: z.string().min(1).optional(),
 });
 
 export interface AppConfig {
@@ -47,6 +53,8 @@ export interface AppConfig {
   waitForSessionUpdated: boolean;
   gatewayTags: string[] | undefined;
   twilioValidateUpgrade: boolean;
+  /** Spec 10 R10 (test harness only) — see EnvSchema.GATEWAY_WS_URL doc comment above. */
+  gatewayWsUrl: string | undefined;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -83,5 +91,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     waitForSessionUpdated: e.WAIT_FOR_SESSION_UPDATED,
     gatewayTags: gatewayTags && gatewayTags.length > 0 ? gatewayTags : undefined,
     twilioValidateUpgrade: e.TWILIO_VALIDATE_UPGRADE === 'true',
+    gatewayWsUrl: e.GATEWAY_WS_URL,
   };
 }

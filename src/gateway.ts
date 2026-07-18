@@ -276,8 +276,20 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
   const { mint, callSid, tools, formats, config, callbacks } = opts;
 
   const rt = gateway.experimental_realtime(config.modelId);
-  const wsCfg = rt.getWebSocketConfig({ token: mint.token, url: mint.url });
-  const gw = new WebSocket(wsCfg.url, wsCfg.protocols, gatewayWsOptions(config));
+  // Spec 10 R10 (test-only): GATEWAY_WS_URL bypasses mintRealtimeToken/getWebSocketConfig
+  // entirely — there is no token, so no auth subprotocol is offered (`protocols: []`) — and
+  // opens a bare WS straight at the fake gateway's ws:// URL. `rt` is still constructed either
+  // way for `serializeClientEvent`/`parseServerEvent` below (both pure identity, no I/O for the
+  // gateway provider — findings/02 claim 3), so this branch touches nothing else in this
+  // function. Production behavior (GATEWAY_WS_URL unset) is bit-identical to before this branch
+  // existed: the untouched gateway unit-test suite (gateway.leg.test.ts et al.) proves it.
+  let gw: WebSocket;
+  if (config.gatewayWsUrl) {
+    gw = new WebSocket(config.gatewayWsUrl, [], { perMessageDeflate: false });
+  } else {
+    const wsCfg = rt.getWebSocketConfig({ token: mint.token, url: mint.url });
+    gw = new WebSocket(wsCfg.url, wsCfg.protocols, gatewayWsOptions(config));
+  }
 
   const t0 = now();
   let opened = false;
