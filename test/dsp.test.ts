@@ -525,6 +525,86 @@ describe('Tone fidelity — least-squares projection THD+N (R12.5 / A1)', () => 
   }
 });
 
+// ---- Spec 10 R3.6: decimator phase counter — explicit total-output-count formula ----
+// The R12.3 bit-identity tests above already imply this (equal-length assertions vs
+// one-shot), but Spec 10 R3.6 asks for the count formula itself, asserted directly,
+// across non-multiple-of-3 chunk lengths, including a chunk whose BYTE length is odd
+// (findings/06 gotcha 4) fed through the production gatewayToTwilio wrapper, not just
+// the bare Downsampler3x class.
+//
+// NOTE on R3.6's literal wording: Spec 10 R3.6 states the expected count as
+// `floor(totalInput/3)`. Measured against the actual implementation (phase starts at 0,
+// which always keeps global sample index 0 first), the correct closed form for a
+// contiguous decimate-by-3 run of N samples is `ceil(N/3)` whenever N is not a multiple
+// of 3 (verified below: N=10007 -> 3336, not floor(10007/3)=3335). This is a paraphrase
+// imprecision in the spec text, not a code defect — reported in the Completion Report's
+// "R3 gaps found" line. The invariant that actually matters, and that both tests below
+// enforce as their primary assertion, is un-affected by which rounding convention is
+// "correct": ragged/odd-byte chunking must produce a total sample count IDENTICAL to a
+// fresh one-shot run over the same (truncation-adjusted) input — i.e. the phase counter
+// must not silently gain or lose samples. The ceil() closed-form is asserted as a
+// secondary, documented cross-check.
+describe('Decimator phase counter — total output count accounting (Spec 10 R3.6)', () => {
+  it('Downsampler3x: ragged non-multiple-of-3 chunk lengths sum to exactly the one-shot reference count', () => {
+    const totalInput = 10007; // deliberately not divisible by 3, and not a multiple of the ragged pattern sum
+    const sine = generateSine(1000, 8000, totalInput, 24000);
+    const down = new Downsampler3x();
+    const sizes = chunkSizesCycle(RAGGED_CHUNK_PATTERN, totalInput);
+    let totalOut = 0;
+    let offset = 0;
+    for (const size of sizes) {
+      totalOut += down.process(sine.subarray(offset, offset + size)).length;
+      offset += size;
+    }
+    expect(sizes.reduce((s, n) => s + n, 0)).toBe(totalInput); // fixture sanity
+
+    const refCount = new Downsampler3x().process(sine).length;
+    expect(totalOut, 'phase counter must not gain/lose samples across ragged chunk boundaries').toBe(refCount);
+    expect(refCount, 'closed-form cross-check: ceil(N/3) for a phase-0-start contiguous run').toBe(Math.ceil(totalInput / 3));
+  });
+
+  it('gatewayToTwilio: ragged deltas incl. one odd-BYTE-length delta still match a one-shot reference over the same truncation-adjusted samples', () => {
+    const totalSamples = 10007;
+    const sine = generateSine(1000, 8000, totalSamples, 24000);
+    const sampleSizes = chunkSizesCycle(RAGGED_CHUNK_PATTERN, totalSamples);
+
+    const t = createTranscoder('transcode');
+    const refDown = new Downsampler3x();
+    let totalOutBytes = 0; // one mu-law byte per output sample — length IS the sample count
+    let refOutCount = 0;
+    let consumedSamples = 0;
+    let offset = 0;
+    let droppedAnOddChunk = false;
+
+    for (const size of sampleSizes) {
+      const chunk = sine.subarray(offset, offset + size);
+      offset += size;
+      if (size === 0) continue;
+      let buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      let effectiveChunk = chunk;
+      // Simulate one arriving gateway audio-delta whose byte length is itself odd (not a
+      // whole number of PCM16 samples) — the RAGGED_CHUNK_PATTERN's `7`-sample chunk (14
+      // bytes) is dropped to 13 bytes so the wrapper's odd-length fallback truncates it,
+      // losing exactly one whole sample from this chunk (findings/06 gotcha 4/5).
+      if (!droppedAnOddChunk && size === 7) {
+        buf = buf.subarray(0, buf.byteLength - 1);
+        effectiveChunk = chunk.subarray(0, chunk.length - 1);
+        droppedAnOddChunk = true;
+      }
+      const deltaB64 = buf.toString('base64');
+      const outB64 = t.gatewayToTwilio(deltaB64);
+      totalOutBytes += Buffer.from(outB64, 'base64').byteLength;
+      refOutCount += refDown.process(effectiveChunk).length;
+      consumedSamples += effectiveChunk.length;
+    }
+
+    expect(droppedAnOddChunk, 'fixture sanity: RAGGED_CHUNK_PATTERN must include a size-7 chunk to exercise the odd-byte path').toBe(true);
+    expect(consumedSamples, 'the odd-byte chunk really did lose exactly one sample').toBe(totalSamples - 1);
+    expect(totalOutBytes, 'gatewayToTwilio total output must match a directly-driven Downsampler3x reference over the identical truncation-adjusted sample sequence').toBe(refOutCount);
+    expect(refOutCount, 'closed-form cross-check: ceil(consumedSamples/3)').toBe(Math.ceil(consumedSamples / 3));
+  });
+});
+
 describe('Per-frame perf budget — full production round trip (R12.6 / A1)', () => {
   it('twilioToGateway + gatewayToTwilio on one createTranscoder("transcode") instance average < 500 microseconds per frame', () => {
     const sinePcm8 = generateSine(1000, 8000, MULAW_BYTES_PER_20MS, 8000);
