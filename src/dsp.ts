@@ -1,7 +1,8 @@
 // T06.1 — Vendored G.711 mu-law codec tables + frame-math sanity constants.
-// Verbatim per Spec 06 R5 / R10 and findings/06 C1, C5, C8 — do NOT use the
-// `alawmulaw` npm package (banned, Spec 06 A2 / master plan R-10): its UMD
-// `main` with no `exports` field throws under Node ESM named imports, and its
+// Verbatim per Spec 06 R5 / R10 and findings/06 C1, C5, C8 — do NOT depend on
+// the banned third-party mu-law codec package (Spec 06 A2 / master plan
+// R-10; see findings/06 C8, gotcha 1 for details): its UMD `main` with no
+// `exports` field throws under Node ESM named imports, and its
 // `encodeSample()` returns an unmasked value. Vendoring these ~30 lines is
 // both correct and measured faster.
 //
