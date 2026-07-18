@@ -91,9 +91,9 @@ Wave-end merge: `server.ts` route-registration marker section — T03.2 and T07.
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
 | T05.1 | 05-session-bridge/01-bargein-and-marks.md | T01, T03, T04, T06 | OK | 91401aa+19b5777 | deep review APPROVED after fixes (A14 grep clean, loud unwired-gateway guard); Minors handed to T05.2: one writer for firstMarkNameOfResponse, barge-in line double-emit vs TurnRecorder, retire dead isFirstMarkOfResponse seam |
-| T05.2 | 05-session-bridge/02-dispatch-and-epoch.md | T05.1, T03, T04, T06, T08 | D | | |
-| T05.3 | 05-session-bridge/03-turns-and-tool-gate.md | T05.2, T07, T08 | - | | |
-| T05.4 | 05-session-bridge/04-orchestration-and-teardown.md | T05.1–T05.3, T02, T03, T04, T06, T07, T08 | - | | |
+| T05.2 | 05-session-bridge/02-dispatch-and-epoch.md | T05.1, T03, T04, T06, T08 | OK | 11df8a3 | deep review APPROVED (A7 mutation-verified); handed to T05.3: dual turn-tracking Session.turns vs TurnRecorder.turns (Important), first-audio-delta double-emit once recorder wired, pushMark-on-closed-socket cosmetic |
+| T05.3 | 05-session-bridge/03-turns-and-tool-gate.md | T05.2, T07, T08 | OK | 47522ab | deep review APPROVED; Minor for final review: closed-socket pushMark guard untested; handed to T05.4: ToolLoop log wrapper must add callSid/streamSid/turn (R11), TurnRecord.tools stays empty by design |
+| T05.4 | 05-session-bridge/04-orchestration-and-teardown.md | T05.1–T05.3, T02, T03, T04, T06, T07, T08 | D | | |
 | T09.1 | 09-deployment-ops/01-railway-config-verify.md | T01 | OK | e8e80d6 | verify-only; railway.json already conformant; invariants locked by new test |
 | T09.2 | 09-deployment-ops/02-fallback-clip-assets.md | T01 | OK | 05bee1a | DEV-04 route done: System.Speech + build-fallback-clip.ts (replaces make-fallback-clip.sh); clip 6.97s/55752B; S23 live playback deferred to M1 |
 | T09.3 | 09-deployment-ops/03-fallback-helper.md | T01, T03, T08, T09.2 | OK | 1b85286 | clean; playFallbackAndClose + playFallbackAndCloseWith; wiring gated on S23 (orchestrator, Wave D end) |
