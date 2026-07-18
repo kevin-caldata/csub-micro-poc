@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LogFields } from './logger.js';
-import { pct, TurnRecorder } from './latency.js';
+import { pct, TurnRecorder, startLoopMonitor, loopP99Ms } from './latency.js';
 
 function makeRecorder(): { recorder: TurnRecorder; lines: LogFields[] } {
   const lines: LogFields[] = [];
@@ -195,4 +195,169 @@ test('every emitted line carries callSid, streamSid, event, level, message', () 
     assert.equal(typeof line.level, 'string');
     assert.equal(typeof line.message, 'string');
   }
+});
+
+// ── T08.3: greeting record, tool round-trip decomposition, stream-stop summary ────────────
+
+// 1. Greeting flow (A7, A9)
+test('greeting flow: emits ONE greeting line with all R7 deltas, no turn line for g1', () => {
+  const { recorder, lines } = makeRecorder();
+  recorder.seedGreeting({ tTwimlPost: 0, getTokenMs: 87.2, tokenExpiresAt: '2026-07-18T18:00:00Z' });
+  recorder.onWsStart();
+  recorder.onGatewayOpen();
+  recorder.onSessionUpdateSent();
+  recorder.onSessionUpdated();
+  recorder.onGreetingCreateSent();
+  recorder.onResponseCreated('g1');
+  const first = recorder.onAudioDelta('g1');
+  assert.equal(first, true);
+  recorder.onFirstTwilioSend('g1');
+  recorder.onMarkEcho('rg1:0');
+
+  const greetingLines = findLines(lines, 'greeting');
+  assert.equal(greetingLines.length, 1);
+  const g = greetingLines[0]!;
+  for (const field of [
+    'webhookToStartMs',
+    'gatewayOpenMs',
+    'sessionUpdateAckMs',
+    'greetingTtfbMs',
+    'greetingBridgeMs',
+    'greetingPlaybackConfirmMs',
+    'greetingTotalMs',
+  ]) {
+    assert.equal(typeof g[field], 'number', `${field} should be numeric`);
+  }
+  assert.equal(g.getTokenMs, 87.2);
+  assert.equal(g.tokenExpiresAt, '2026-07-18T18:00:00Z');
+
+  assert.equal(findLines(lines, 'turn').length, 0);
+});
+
+// 2. Greeting fallback (R7 emission rule: never lost)
+test('greeting fallback: no mark echo -> greeting line emitted at response-done, no playbackConfirmMs', () => {
+  const { recorder, lines } = makeRecorder();
+  recorder.seedGreeting({ tTwimlPost: 0, getTokenMs: 50, tokenExpiresAt: '2026-07-18T18:00:00Z' });
+  recorder.onWsStart();
+  recorder.onGatewayOpen();
+  recorder.onSessionUpdateSent();
+  recorder.onSessionUpdated();
+  recorder.onGreetingCreateSent();
+  recorder.onResponseCreated('g1');
+  recorder.onAudioDelta('g1');
+  recorder.onFirstTwilioSend('g1');
+  // no onMarkEcho
+  recorder.onResponseDone('g1', 'completed');
+
+  const greetingLines = findLines(lines, 'greeting');
+  assert.equal(greetingLines.length, 1);
+  assert.equal(greetingLines[0]!.greetingPlaybackConfirmMs, undefined);
+});
+
+// 3. Tool follow-up attribution (A5, A6)
+test('tool follow-up attribution: follow-up first delta stamps tFollowupFirstDelta, emits tool-call, no new turn', () => {
+  const { recorder, lines } = makeRecorder();
+  recorder.onSpeechStopped();
+  recorder.onResponseCreated('r1');
+  recorder.onToolArgsDone('call_1', 'get_current_time');
+  recorder.onToolResolved('call_1');
+  recorder.onToolOutputSent('call_1');
+  recorder.onResponseDone('r1', 'completed');
+  recorder.onToolResponseCreateSent('call_1');
+  recorder.onResponseCreated('r2');
+  const first = recorder.onAudioDelta('r2');
+  assert.equal(first, true);
+
+  const toolLines = findLines(lines, 'tool-call');
+  assert.equal(toolLines.length, 1);
+  const t = toolLines[0]!;
+  assert.equal(typeof t.mcpMs, 'number');
+  assert.equal(typeof t.gateWaitMs, 'number');
+  assert.equal(typeof t.secondTtfbMs, 'number');
+  assert.equal(typeof t.toolTotalMs, 'number');
+  assert.equal(t.callId, 'call_1');
+
+  // No new turn opened for r2 — still exactly one turn (r1), keyed by responseId r1.
+  assert.equal(recorder.turns.length, 1);
+  assert.equal(recorder.turns[0]!.responseId, 'r1');
+  const turnLines = findLines(lines, 'turn');
+  assert.equal(turnLines.length, 1);
+  assert.equal(turnLines[0]!.turn, 1);
+});
+
+// 4. Tool failure, no follow-up audio
+test('tool failure: no follow-up audio -> tool-call line carries isError:true, no secondTtfbMs', () => {
+  const { recorder, lines } = makeRecorder();
+  recorder.onSpeechStopped();
+  recorder.onResponseCreated('r1');
+  recorder.onToolArgsDone('call_1', 'get_current_time');
+  recorder.onToolResolved('call_1', true);
+  recorder.onResponseDone('r1', 'failed');
+
+  const toolLines = findLines(lines, 'tool-call');
+  assert.equal(toolLines.length, 1);
+  assert.equal(toolLines[0]!.isError, true);
+  assert.equal(toolLines[0]!.secondTtfbMs, undefined);
+});
+
+// 5. Summary (A8, A9)
+test('stream-stop summary: n excludes barged-no-audio turn and the greeting', () => {
+  startLoopMonitor(); // production boots this once; the summary reads the process-wide histogram
+  const { recorder, lines } = makeRecorder();
+
+  // Greeting — must never enter turns[] or the percentiles.
+  recorder.seedGreeting({ tTwimlPost: 0, getTokenMs: 40 });
+  recorder.onWsStart();
+  recorder.onGreetingCreateSent();
+  recorder.onResponseCreated('g1');
+  recorder.onAudioDelta('g1');
+  recorder.onFirstTwilioSend('g1');
+  recorder.onMarkEcho('rg1:0');
+
+  // 3 complete turns.
+  for (const id of ['r1', 'r2', 'r3']) {
+    recorder.onSpeechStopped();
+    recorder.onResponseCreated(id);
+    recorder.onAudioDelta(id);
+    recorder.onFirstTwilioSend(id);
+    recorder.onResponseDone(id, 'completed');
+  }
+
+  // 1 barged-before-first-audio turn.
+  recorder.onSpeechStopped();
+  recorder.onResponseCreated('r4');
+  recorder.onSpeechStarted();
+  recorder.onResponseDone('r4', 'cancelled');
+
+  recorder.onStreamStop();
+
+  const summaryLines = findLines(lines, 'stream-stop');
+  assert.equal(summaryLines.length, 1);
+  const s = summaryLines[0]!;
+  assert.equal(s.turns, 4);
+  assert.equal(s.n, 3);
+  assert.equal(s.bargeIns, 1);
+  for (const field of ['ttfbP50', 'ttfbP95', 'ttfbMax', 'bridgeP50', 'bridgeP95', 'turnP50', 'turnP95', 'turnMax']) {
+    assert.equal(typeof s[field], 'number', `${field} should be numeric`);
+  }
+  assert.equal(s.toolCalls, 0);
+  assert.equal(typeof s.loopP99Ms, 'number');
+});
+
+// 6. Idempotent stream-stop
+test('onStreamStop() twice emits exactly one summary', () => {
+  const { recorder, lines } = makeRecorder();
+  recorder.onWsStart();
+  recorder.onStreamStop();
+  recorder.onStreamStop();
+  assert.equal(findLines(lines, 'stream-stop').length, 1);
+});
+
+// 7. Event-loop guard
+test('loopP99Ms() after startLoopMonitor() returns a finite number >= 0', () => {
+  startLoopMonitor();
+  const v = loopP99Ms();
+  assert.equal(typeof v, 'number');
+  assert.ok(Number.isFinite(v));
+  assert.ok((v as number) >= 0);
 });
