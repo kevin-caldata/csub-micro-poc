@@ -44,7 +44,6 @@ import {
   isBenignGatewayError,
   openGatewayLeg as realOpenGatewayLeg,
   type GatewayLegCallbacks,
-  type MintResult,
 } from './gateway.js';
 import { createTranscoder, audioFormatsFor } from './dsp.js';
 import { createMcpClient as realCreateMcpClient, closeMcpClient, fetchToolDefs as realFetchToolDefs, ToolLoop, type RealtimeToolDef } from './tools.js';
@@ -330,18 +329,45 @@ export async function startSessionBridge(
   session.recorder = new TurnRecorder({ callSid: session.callSid, streamSid: session.streamSid });
   session.recorder.onWsStart();
 
+  // The teardown funnel additions (Spec 05 R11's teardown() body, minus the fields Spec 03's
+  // `teardownSession` already owns — `tornDown` latch, `sessions.delete`, `startTimer` clear,
+  // the Twilio close itself). `session.heartbeat` does not exist on the Session shape by
+  // design (see sessions.ts's T05.4 comment) — the optional gateway ping (Spec 04 R12) clears
+  // its own timer inside `openGatewayLeg`'s `'close'` handler with no Session-level state to
+  // reconcile here.
+  //
+  // Installed HERE, immediately after the recorder exists and BEFORE the mint await below, not
+  // at the end of this function's happy path: every reference in the body (`toolLoop`,
+  // `mcpClient`, `gateway`, `recorder`) is optional-chained/`if`-guarded against the Session
+  // fields they close over, so the closure is safe to install before any of those fields are
+  // ever assigned. That makes it safe to install unconditionally up front, which is exactly what
+  // Spec 08 R12 needs: EVERY failure path below — mint-rejected, gateway-open-failed, and any
+  // future early exit — must reach `session.recorder?.onStreamStop()` via `teardownSession`,
+  // never just the happy path (findings review: the mint-rejection catch at (1) used to
+  // `return` before this assignment ever ran, so a mint failure silently skipped the
+  // stream-stop percentile summary the file-header comment above claims it gets).
+  session.onTeardown = () => {
+    session.toolLoop?.dispose();
+    if (session.mcpClient) void closeMcpClient(session.mcpClient);
+    session.gateway?.close(1000, 'call ended'); // internally guarded no-op if already closed/failed
+    session.recorder?.onStreamStop(); // idempotent; Spec 08 R12 percentile summary
+  };
+
   // (1) Await the mint kicked off at webhook time (Spec 02 R5.3) — never re-mint here. A
   // rejection is the FR-7 mint-failure trigger: log + teardown (clean hangup), no gateway leg
   // ever opened, and — because this whole function is one async body under a caller that never
   // awaits it — this catch is what stands between a rejected `gatewayAuth` and an
   // unhandledRejection that could take down the process (findings/08 gotcha 10 class of bug).
-  let mint: MintResult;
+  // `pendingCall.gatewayAuth`'s declared type (Spec 02 R5.2, widened in twiml.ts to match what
+  // the real mint() call actually resolves with) makes `getTokenMs` optional, not the required
+  // field gateway.ts's `MintResult` names — real production mints always include it, but the
+  // `SessionBridgeDeps` test seam's injected mints legitimately omit it (findings review: the
+  // previous `as MintResult` cast fabricated a required field the source type never promised,
+  // which is statically unsound regardless of what any given caller happens to provide). Consume
+  // it as possibly-undefined below; never cast it into existence.
+  let mint: Awaited<PendingCall['gatewayAuth']>;
   try {
-    // Post-merge (Spec 00 §3 Wave B mint-delegation note), `pendingCall.gatewayAuth` resolves to
-    // Spec 04's `MintResult` shape (token/url/expiresAt/getTokenMs) even though `PendingCall`'s
-    // own field type (Spec 02 R5.2) only names the narrower {token,url,expiresAt} — consume
-    // whichever shape the as-built code stores, per this task's Interfaces note.
-    mint = (await pendingCall.gatewayAuth) as MintResult;
+    mint = await pendingCall.gatewayAuth;
   } catch (err) {
     session.log('error', 'mint failed', { event: 'mint-failed', err: String(err) });
     teardownSession(session, 'mint-failed');
@@ -413,19 +439,6 @@ export async function startSessionBridge(
     session.recorder?.onMarkEcho(name);
   };
 
-  // The teardown funnel additions (Spec 05 R11's teardown() body, minus the fields Spec 03's
-  // `teardownSession` already owns — `tornDown` latch, `sessions.delete`, `startTimer` clear,
-  // the Twilio close itself). `session.heartbeat` does not exist on the Session shape by
-  // design (see sessions.ts's T05.4 comment) — the optional gateway ping (Spec 04 R12) clears
-  // its own timer inside `openGatewayLeg`'s `'close'` handler with no Session-level state to
-  // reconcile here.
-  session.onTeardown = () => {
-    session.toolLoop?.dispose();
-    if (session.mcpClient) void closeMcpClient(session.mcpClient);
-    session.gateway?.close(1000, 'call ended'); // internally guarded no-op if already closed/failed
-    session.recorder?.onStreamStop(); // idempotent; Spec 08 R12 percentile summary
-  };
-
   // (5) The gateway leg itself (Spec 04 R5/R8) — `formats`/`tools` injected per Spec 06 R2/Spec
   // 07 R8 (gateway.ts never hand-builds either). `callbacks.onEvent` IS `dispatch` — no second
   // parse/listener layer (Spec 05 R2 preamble).
@@ -479,7 +492,13 @@ export async function startSessionBridge(
   };
 
   session.gateway = deps.openGatewayLeg({
-    mint,
+    // `openGatewayLeg` only ever reads `mint.token`/`mint.url` (verified in gateway.ts — it never
+    // touches `getTokenMs`), so the `?? 0` below is a type-satisfying placeholder for
+    // `MintResult`'s required field, never a real duration; the actual (possibly-undefined for
+    // injected test mints) value is what `seedGreeting` above genuinely consumes. This is a
+    // default, not a cast — no property is asserted into existence that the source type doesn't
+    // already declare.
+    mint: { ...mint, getTokenMs: mint.getTokenMs ?? 0 },
     callSid: session.callSid,
     tools,
     formats: audioFormatsFor(config.audioMode),

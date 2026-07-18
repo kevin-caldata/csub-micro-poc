@@ -233,6 +233,53 @@ describe('startSessionBridge — mint rejection (FR-7 at mint time)', () => {
     assert.equal(socket.closeCalls[0]?.code, 1000); // clean hangup, NOT the drain 1001
     assert.equal(sessions.has(session.streamSid), false);
   });
+
+  // Regression net (findings review): `onTeardown` (which calls `session.recorder?.onStreamStop()`
+  // — the Spec 08 R12 percentile summary) used to be installed AFTER the mint-rejection catch's
+  // `return`, so a mint failure tore down the session WITHOUT ever installing the hook and the
+  // stream-stop summary line was silently never emitted — even though the file's own comment
+  // claimed every call gets one. `onTeardown` is now installed immediately after the recorder is
+  // constructed, before the mint await, so `teardownSession`'s `onTeardown?.()` call reaches it on
+  // every path, mint-rejection included. This asserts the actual emitted line, not just that some
+  // hook ran, per the same stdout-capture pattern the greeting-decomposition test below uses
+  // (TurnRecorder's default emit is logEvent -> process.stdout.write).
+  it('still emits the recorder stream-stop summary line (Spec 08 R12) even though the mint failed', async () => {
+    const { session } = makeSession();
+    sessions.set(session.streamSid, session);
+
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    const chunks: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout as any).write = (chunk: any) => {
+      chunks.push(String(chunk));
+      return true;
+    };
+
+    try {
+      const gw = fakeOpenGatewayLeg();
+      await startSessionBridge(session, pendingCallRejecting(new Error('boom')), {
+        config: fixtureConfig,
+        openGatewayLeg: gw.fn,
+      });
+
+      const streamStopLines = chunks
+        .map((c) => {
+          try {
+            return JSON.parse(c) as Record<string, unknown>;
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((v): v is Record<string, unknown> => v !== undefined && v.event === 'stream-stop');
+
+      assert.equal(streamStopLines.length, 1, 'expected exactly one stream-stop line even on mint failure');
+      const line = streamStopLines[0]!;
+      assert.equal(line.n, 0, 'no turns ever opened before the mint failure');
+      assert.equal(line.turns, 0);
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+  });
 });
 
 describe('startSessionBridge — fetchToolDefs failure (FR-7: a tool failure never kills the call)', () => {

@@ -9,7 +9,12 @@ import { logEvent } from './logger.js';
 export interface PendingCall {
   callSid: string;
   createdAt: number; // Date.now()
-  gatewayAuth: Promise<{ token: string; url: string; expiresAt?: number }>;
+  // Widened to include gateway.ts's `getTokenMs` (MintResult's shape) as optional, not required:
+  // the real mint() call site always resolves with it, but injected test mints (session.ts's
+  // `SessionBridgeDeps` seam) legitimately omit it, and session.ts consumes it as
+  // possibly-undefined (TurnRecorder.seedGreeting already treats a missing getTokenMs as
+  // "nothing to seed" rather than throwing) — see this task's Finding 2 note.
+  gatewayAuth: Promise<{ token: string; url: string; expiresAt?: number; getTokenMs?: number }>;
 }
 
 export const pendingCalls = new Map<string, PendingCall>(); // key = per-call token
