@@ -9,11 +9,11 @@ Companion protocol: `plans/README.md`. Wave structure: master plan `docs/specs/0
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: D
+- Wave: E
 - Last updated: 2026-07-18
-- Next dispatchable tasks: T05.1, T09.2-amended (dispatched); then T05.2→.3→.4 and T09.3→T09.5
-- Open blockers: none (T09.2 unblocked via DEV-04 repo-DSP clip generation)
-- Notes: Waves A-C complete, 204/204 tests, typecheck clean. Wave C marker merge resolved (both route lines). T02.4+T03.4 deep reviews APPROVED (Minors logged for final review). Wave D orchestrator merge items: startLoopMonitor() boot wiring (T08.3), fallback seam playFallbackAndClose→setOnGatewayFailure (S23-gated), possible onSessionStart(session, pendingCall) widening (record on T03 row)
+- Next dispatchable tasks: T10.1 (dispatched); then T10.2-T10.7 fan-out per deps; T10.8 milestone execution needs the human
+- Open blockers: none
+- Notes: Waves A-D complete, 279/279 tests, typecheck clean. All 4 T05 deep reviews APPROVED (after fix loops). Wave D orchestrator merges applied (d9eecfd): startLoopMonitor boot + fallback seam (S23 validates at M1). onSessionStart widened to (session, pendingCall) per anticipated amendment. Minors accumulated for final whole-branch review: T02.4 teardown-loop guard, T03.4 test boilerplate dup + Spec03 R10 media-cadence gap, T05.3 closed-socket pushMark test (added in 47522ab-follow-ups? verify), T05.4 webhookToStartMs unseeded
 
 ---
 
@@ -93,7 +93,7 @@ Wave-end merge: `server.ts` route-registration marker section — T03.2 and T07.
 | T05.1 | 05-session-bridge/01-bargein-and-marks.md | T01, T03, T04, T06 | OK | 91401aa+19b5777 | deep review APPROVED after fixes (A14 grep clean, loud unwired-gateway guard); Minors handed to T05.2: one writer for firstMarkNameOfResponse, barge-in line double-emit vs TurnRecorder, retire dead isFirstMarkOfResponse seam |
 | T05.2 | 05-session-bridge/02-dispatch-and-epoch.md | T05.1, T03, T04, T06, T08 | OK | 11df8a3 | deep review APPROVED (A7 mutation-verified); handed to T05.3: dual turn-tracking Session.turns vs TurnRecorder.turns (Important), first-audio-delta double-emit once recorder wired, pushMark-on-closed-socket cosmetic |
 | T05.3 | 05-session-bridge/03-turns-and-tool-gate.md | T05.2, T07, T08 | OK | 47522ab | deep review APPROVED; Minor for final review: closed-socket pushMark guard untested; handed to T05.4: ToolLoop log wrapper must add callSid/streamSid/turn (R11), TurnRecord.tools stays empty by design |
-| T05.4 | 05-session-bridge/04-orchestration-and-teardown.md | T05.1–T05.3, T02, T03, T04, T06, T07, T08 | D | | |
+| T05.4 | 05-session-bridge/04-orchestration-and-teardown.md | T05.1–T05.3, T02, T03, T04, T06, T07, T08 | OK | 2c2c967+c3b77af+e0e04b3 | deep review APPROVED after fixes (onTeardown move-early RED-verified; PendingCall typing sound); greeting decomposition landed; Minor for final review: webhookToStartMs never seeded |
 | T09.1 | 09-deployment-ops/01-railway-config-verify.md | T01 | OK | e8e80d6 | verify-only; railway.json already conformant; invariants locked by new test |
 | T09.2 | 09-deployment-ops/02-fallback-clip-assets.md | T01 | OK | 05bee1a | DEV-04 route done: System.Speech + build-fallback-clip.ts (replaces make-fallback-clip.sh); clip 6.97s/55752B; S23 live playback deferred to M1 |
 | T09.3 | 09-deployment-ops/03-fallback-helper.md | T01, T03, T08, T09.2 | OK | 1b85286 | clean; playFallbackAndClose + playFallbackAndCloseWith; wiring gated on S23 (orchestrator, Wave D end) |
