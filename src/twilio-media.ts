@@ -13,6 +13,7 @@ const { validateRequest } = twilio;
 import type { AppConfig } from './config.js';
 import { logEvent } from './logger.js';
 import { createSession, teardownSession, sessions, type Session } from './sessions.js';
+import type { PendingCall } from './twiml.js';
 // T05.1 reconciliation: the inbound `mark` case below delegates wholly to bargein.ts's
 // `onMarkEcho` (Spec 05 R6 note) rather than re-implementing the remove-by-name splice. This is
 // a deliberate reverse import (Spec 05 depends on Spec 03, not vice versa) — safe under ESM
@@ -98,8 +99,16 @@ export type TwilioInboundMessage =
  */
 export interface TwilioMediaDeps {
   config: Pick<AppConfig, 'publicHost' | 'twilioAuthToken' | 'twilioValidateUpgrade'>;
-  claimPendingCall: (candidate: string) => { callSid: string } | undefined;
-  onSessionStart: (session: Session) => void;
+  claimPendingCall: (candidate: string) => PendingCall | undefined;
+  /**
+   * T05.4 widening (Spec 03 R4 step 4 already holds the claimed `PendingCall` at this call
+   * site — it was simply not threaded through until now): the real implementation this points
+   * at (`startSessionBridge`, Spec 05) needs `pendingCall.gatewayAuth` to await the mint. The
+   * narrower `(session) => void` signature this deviated from is additively widened, not
+   * replaced — existing stub `onSessionStart`s that ignore the second parameter (all of T03's
+   * own tests) keep working unchanged; JS simply drops the extra argument they never declared.
+   */
+  onSessionStart: (session: Session, pendingCall: PendingCall) => void | Promise<void>;
   /**
    * Test-only override for the R4 start-timeout (default 5000 ms — see `START_TIMEOUT_MS`
    * below). Deviation-by-design recorded in the T03.2 completion report: `node:test`'s
@@ -281,7 +290,11 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
               streamSid: startStreamSid,
               mediaFormat: msg.start.mediaFormat,
             });
-            deps.onSessionStart(session); // Spec 05 replaces onSessionStart
+            // Fire-and-forget: startSessionBridge does async bootstrap work (mint await, MCP
+            // client, gateway leg) off this synchronous message handler. It must never reject
+            // unhandled — Spec 05's own try/catch around the mint await is the guarantee; `void`
+            // here documents that this call site deliberately does not await it.
+            void deps.onSessionStart(session, claimed);
             break;
           }
 

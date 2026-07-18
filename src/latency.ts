@@ -137,6 +137,18 @@ export class TurnRecorder {
     this.emit = emit;
   }
 
+  /** T05.4 addition: best-effort current-turn number for cross-module log enrichment (e.g.
+   *  Spec 07's ToolLoop 'tool-call' line, via the session-assembly task's log wrapper — Spec
+   *  08 R11's `turn` field / tools.ts's ToolLoopDeps.log doc comment). Prefers the still-open
+   *  turn; falls back to the most recently closed one, which is the common case for a tool
+   *  round trip (its turn's response-done already closed it by the time the follow-up's first
+   *  delta fires the 'tool-call' line). TurnRecorder's OWN tool hooks (onToolArgsDone et al.)
+   *  remain unwired by design — ToolLoop owns tool-call instrumentation end to end; this getter
+   *  is read-only bookkeeping, not a second writer. */
+  get currentTurnNumber(): number | undefined {
+    return this.currentTurn?.turn ?? this.turns.at(-1)?.turn;
+  }
+
   private emitLine(event: string, message: string, extra: Record<string, unknown> = {}): void {
     this.emit({
       level: 'info',

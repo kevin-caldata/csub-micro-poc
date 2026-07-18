@@ -34,10 +34,23 @@
 // site so the recorder can actually compute `bridgeMs`/emit that second line itself.
 
 import type { Experimental_RealtimeModelV4ServerEvent as ServerEvent } from '@ai-sdk/provider';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Session } from './sessions.js';
+import { teardownSession } from './sessions.js';
 import { bargeIn, pushMark } from './bargein.js';
 import { sendMedia, nextMarkName } from './twilio-media.js';
-import { isBenignGatewayError } from './gateway.js';
+import type { PendingCall } from './twiml.js';
+import {
+  isBenignGatewayError,
+  openGatewayLeg as realOpenGatewayLeg,
+  type GatewayLegCallbacks,
+  type MintResult,
+} from './gateway.js';
+import { createTranscoder, audioFormatsFor } from './dsp.js';
+import { createMcpClient as realCreateMcpClient, closeMcpClient, fetchToolDefs as realFetchToolDefs, ToolLoop, type RealtimeToolDef } from './tools.js';
+import type { ToolLoopDeps } from './tools.js';
+import { TurnRecorder } from './latency.js';
+import { loadConfig, type AppConfig } from './config.js';
 import { safeRaw } from './logger.js';
 
 /**
@@ -247,4 +260,218 @@ export function handleTwilioMedia(s: Session, payloadB64: string): void {
   if (!s.gateway?.isOpen) return;
   const audio = s.transcoder ? s.transcoder.twilioToGateway(payloadB64) : payloadB64;
   void s.gateway.appendAudio(audio);
+}
+
+// ── T05.4 — call-start orchestration, teardown funnel additions, onGatewayFailure seam ─────
+// (Spec 05 R1/R11, Spec 03 R4 step 4 `deps.onSessionStart`, Spec 04 R5/R8, Spec 06 R2/R3,
+// Spec 07 R7/R8/R10, Spec 08 R6/R7.) This is Spec 03's `deps.onSessionStart` implementation:
+// mint await -> transcoder -> MCP client/tools -> TurnRecorder/ToolLoop -> openGatewayLeg ->
+// hook installation. The ONE teardown implementation stays Spec 03's `teardownSession`/
+// `Session.teardown(reason)` funnel (sessions.ts) — this task's additions (heartbeat clearing,
+// ToolLoop disposal, MCP client close, gateway leg close, the recorder's stream-stop summary)
+// run via `session.onTeardown`, which that funnel already calls before `sessions.delete` and
+// before closing the Twilio socket. No second, parallel teardown function is introduced.
+//
+// Deviation-by-design (recorded in the T05.4 completion report, same idiom as
+// `mintRealtimeToken(cfg, ...)`/`registerTwimlRoutes(app, config, deps?)` elsewhere in this
+// repo): the Produces-listed signature `startSessionBridge(session, pendingCall)` is preserved
+// as the two-argument call Spec 03's route site uses, but a third, optional, additive `deps`
+// parameter is exposed so tests can fake `openGatewayLeg`/`createMcpClient`/`fetchToolDefs`
+// without a real WS connection or a real MCP HTTP round trip. `config` defaults to a fresh
+// `loadConfig()` call (never a module-level singleton, per Spec 01 R5) when not overridden.
+
+/** Injectable dependency surface for `startSessionBridge` (test seam; production omits it). */
+export interface SessionBridgeDeps {
+  config: AppConfig;
+  openGatewayLeg: typeof realOpenGatewayLeg;
+  createMcpClient: typeof realCreateMcpClient;
+  fetchToolDefs: typeof realFetchToolDefs;
+}
+
+function resolveDeps(overrides: Partial<SessionBridgeDeps>): SessionBridgeDeps {
+  return {
+    config: overrides.config ?? loadConfig(),
+    openGatewayLeg: overrides.openGatewayLeg ?? realOpenGatewayLeg,
+    createMcpClient: overrides.createMcpClient ?? realCreateMcpClient,
+    fetchToolDefs: overrides.fetchToolDefs ?? realFetchToolDefs,
+  };
+}
+
+/**
+ * Module-level seam, default no-op (Spec 05 R11's `onGatewayFailure(s)` hook). Invoked from the
+ * gateway-close teardown row BEFORE the Twilio close — this IS the Spec 05<->09 merge point:
+ * `playFallbackAndClose` from `src/fallback.ts` plugs in here at the Wave D orchestrator merge,
+ * gated on spike S23. This task deliberately does NOT wire any fallback — the default stays a
+ * no-op so the FR-7 clean-hangup path is exactly what fires until that merge happens.
+ */
+let onGatewayFailure: (s: Session) => void | Promise<void> = () => {};
+
+export function setOnGatewayFailure(fn: (s: Session) => void | Promise<void>): void {
+  onGatewayFailure = fn;
+}
+
+/**
+ * Spec 03's `deps.onSessionStart` implementation (Spec 05 R1 + the References). Runs once per
+ * call, right after the Twilio `start` auth gate succeeds and the Session is registered in
+ * `sessions`. Never throws/rejects out to its caller — Spec 03's route site calls this
+ * fire-and-forget (`void deps.onSessionStart(...)`), so every failure path below is caught and
+ * funneled into `teardownSession` instead of becoming an unhandled rejection.
+ */
+export async function startSessionBridge(
+  session: Session,
+  pendingCall: PendingCall,
+  overrides: Partial<SessionBridgeDeps> = {},
+): Promise<void> {
+  const deps = resolveDeps(overrides);
+  const { config } = deps;
+
+  // TurnRecorder exists for the life of the call regardless of what happens below — even a
+  // mint failure gets its (empty) stream-stop summary line via the teardown funnel.
+  session.recorder = new TurnRecorder({ callSid: session.callSid, streamSid: session.streamSid });
+  session.recorder.onWsStart();
+
+  // (1) Await the mint kicked off at webhook time (Spec 02 R5.3) — never re-mint here. A
+  // rejection is the FR-7 mint-failure trigger: log + teardown (clean hangup), no gateway leg
+  // ever opened, and — because this whole function is one async body under a caller that never
+  // awaits it — this catch is what stands between a rejected `gatewayAuth` and an
+  // unhandledRejection that could take down the process (findings/08 gotcha 10 class of bug).
+  let mint: MintResult;
+  try {
+    // Post-merge (Spec 00 §3 Wave B mint-delegation note), `pendingCall.gatewayAuth` resolves to
+    // Spec 04's `MintResult` shape (token/url/expiresAt/getTokenMs) even though `PendingCall`'s
+    // own field type (Spec 02 R5.2) only names the narrower {token,url,expiresAt} — consume
+    // whichever shape the as-built code stores, per this task's Interfaces note.
+    mint = (await pendingCall.gatewayAuth) as MintResult;
+  } catch (err) {
+    session.log('error', 'mint failed', { event: 'mint-failed', err: String(err) });
+    teardownSession(session, 'mint-failed');
+    return;
+  }
+
+  session.recorder.seedGreeting({
+    getTokenMs: mint.getTokenMs,
+    tokenExpiresAt: mint.expiresAt !== undefined ? String(mint.expiresAt) : undefined,
+  });
+
+  // (2) Transcoder — per-call, never shared (Spec 06 R3/R11).
+  session.transcoder = createTranscoder(config.audioMode);
+
+  // (3) Per-call MCP client + tool defs (Spec 07 R7/R8), before session-update. Two independent
+  // failure points, each degrading gracefully rather than killing the call (FR-7): a client that
+  // never connects leaves `session.mcpClient`/`session.toolLoop` unset (dispatch's
+  // `s.toolLoop?.` optional-chaining already no-ops on every function-call-arguments-done); a
+  // client that connects but whose `listTools()` fails still gets closed at teardown, just with
+  // an empty tool set.
+  let mcpClient: Client | undefined;
+  try {
+    mcpClient = await deps.createMcpClient(config.port);
+  } catch (err) {
+    session.log('error', 'mcp client create failed', { event: 'mcp-client-failed', err: String(err) });
+  }
+  session.mcpClient = mcpClient;
+
+  let tools: RealtimeToolDef[] = [];
+  if (mcpClient) {
+    try {
+      tools = await deps.fetchToolDefs(mcpClient);
+    } catch (err) {
+      session.log('error', 'fetch tool defs failed', { event: 'tool-defs-failed', err: String(err) });
+      tools = [];
+    }
+  }
+
+  // (4) ToolLoop — one per call (Spec 07 R10), constructed only when an MCP client exists (no
+  // client, no tool loop; dispatch()'s `s.toolLoop?.` already handles the absence). The injected
+  // `log` dep is the session-assembled wrapper Spec 08 R11 anticipates (tools.ts's own
+  // `ToolLoopDeps.log` doc comment: "Session injects a wrapper adding callSid/streamSid/turn
+  // fields") — `session.log` already stamps callSid/streamSid (Spec 03 R9's bound logger), so
+  // this wrapper's only job is adding `turn` from the recorder's best-effort current-turn
+  // number. TurnRecorder's OWN tool hooks (`onToolArgsDone` et al.) stay UNWIRED here by
+  // design — ToolLoop is the sole owner of tool-call instrumentation end to end (ledger T07.4
+  // note: "wire one, not both — double-log risk").
+  if (mcpClient) {
+    const toolLog: ToolLoopDeps['log'] = (fields) => {
+      const { level, message, ...rest } = fields;
+      session.log(level, message, { ...rest, turn: session.recorder?.currentTurnNumber });
+    };
+    session.toolLoop = new ToolLoop({
+      client: mcpClient,
+      gwSend: (ev) => (session.gateway ? session.gateway.send(ev) : Promise.resolve()),
+      isResponseActive: () => session.responseActive,
+      log: toolLog,
+    });
+  }
+
+  // (6) Hook installation (Spec 03 R9's declared extension points): `onTwilioMedia` forwards to
+  // this module's own inbound handler; `onFirstMarkEcho` forwards the first-mark-of-response
+  // echo to the recorder (Spec 08 R6.4 — this hook was declared on Session since T03.3 but never
+  // had a writer until this task assembles the real call). `onPlaybackDrained` is left unset:
+  // bargein.ts's `onMarkEcho` already performs the epoch reset unconditionally, so nothing
+  // currently needs the notification.
+  session.onTwilioMedia = (payloadB64) => handleTwilioMedia(session, payloadB64);
+  session.onFirstMarkEcho = (name) => {
+    session.recorder?.onMarkEcho(name);
+  };
+
+  // The teardown funnel additions (Spec 05 R11's teardown() body, minus the fields Spec 03's
+  // `teardownSession` already owns — `tornDown` latch, `sessions.delete`, `startTimer` clear,
+  // the Twilio close itself). `session.heartbeat` does not exist on the Session shape by
+  // design (see sessions.ts's T05.4 comment) — the optional gateway ping (Spec 04 R12) clears
+  // its own timer inside `openGatewayLeg`'s `'close'` handler with no Session-level state to
+  // reconcile here.
+  session.onTeardown = () => {
+    session.toolLoop?.dispose();
+    if (session.mcpClient) void closeMcpClient(session.mcpClient);
+    session.gateway?.close(1000, 'call ended'); // internally guarded no-op if already closed/failed
+    session.recorder?.onStreamStop(); // idempotent; Spec 08 R12 percentile summary
+  };
+
+  // (5) The gateway leg itself (Spec 04 R5/R8) — `formats`/`tools` injected per Spec 06 R2/Spec
+  // 07 R8 (gateway.ts never hand-builds either). `callbacks.onEvent` IS `dispatch` — no second
+  // parse/listener layer (Spec 05 R2 preamble).
+  const callbacks: GatewayLegCallbacks = {
+    onOpen: () => {
+      // Spec 04 owns the session-update + greeting sends; this side only observes the open for
+      // instrumentation (Spec 08 R7's greeting decomposition — the only leg of it this task can
+      // wire without touching gateway.ts, which has no separate session-update-sent/session-
+      // updated/greeting-create-sent callbacks to hook — see the T05.4 completion report's Notes
+      // for the honest scope of what the greeting line captures as a result).
+      session.recorder?.onGatewayOpen();
+      session.log('info', 'gateway leg open', { event: 'gateway-leg-open' });
+    },
+    onOpenFailed: (info) => {
+      // FR-7 at handshake: never bridged, so a clean hangup (default 1000) is correct.
+      session.log('error', 'gateway open failed', {
+        event: 'gateway-open-failed',
+        statusCode: info.statusCode,
+        err: info.message,
+      });
+      teardownSession(session, 'gateway-open-failed');
+    },
+    onEvent: (ev) => dispatch(session, ev),
+    onClose: (info) => {
+      // Spec 05 R11's gateway-close row: log verbatim (this line is additive alongside
+      // gateway.ts's own `gateway-close` line — the same "overlap is a pre-existing artifact of
+      // two specs each mandating their own logging" idiom this file's header already documents
+      // for dispatch()), THEN the onGatewayFailure seam BEFORE the Twilio close, THEN teardown —
+      // clean hangup within one event-loop turn, the FR-7 default with no dead air. Awaiting
+      // onGatewayFailure (default no-op, resolves instantly) is what makes "before the Twilio
+      // close" a real ordering guarantee once T09's async `playFallbackAndClose` plugs in here,
+      // not just an accident of no-op timing.
+      void (async () => {
+        session.log('info', 'gateway-close', { event: 'gateway-close', code: info.code, reason: info.reason });
+        await onGatewayFailure(session);
+        teardownSession(session, 'gateway-close');
+      })();
+    },
+  };
+
+  session.gateway = deps.openGatewayLeg({
+    mint,
+    callSid: session.callSid,
+    tools,
+    formats: audioFormatsFor(config.audioMode),
+    config,
+    callbacks,
+  });
 }

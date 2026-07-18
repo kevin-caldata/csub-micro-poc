@@ -319,6 +319,22 @@ describe('bargeIn — post-bargeIn state', () => {
   });
 });
 
+describe('pushMark — closed-socket guard (T05.4 regression, Spec 03 R5 sendMark contract)', () => {
+  it('CLOSING/CLOSED socket: sendMark no-ops and firstMarkNameOfResponse stays unarmed', () => {
+    for (const rs of [2 /* CLOSING */, 3 /* CLOSED */]) {
+      const s = makeSession();
+      (s.twilioWs as unknown as { readyState: number }).readyState = rs;
+      s.firstMarkNameOfResponse = null;
+
+      pushMark(s, 'r1:1');
+
+      assert.deepEqual(socketSent(s), []); // sendMark itself no-oped
+      assert.equal(s.firstMarkNameOfResponse, null); // never armed for a mark that was never sent
+      assert.deepEqual(s.markQueue, []); // sendMark's own push never ran either
+    }
+  });
+});
+
 describe('onMarkEcho — drain disarm (Spec 05 R4 rule 3)', () => {
   it('removing the LAST queued name sets responseStartTimestamp = null and fires onPlaybackDrained', () => {
     const s = makeSession();
