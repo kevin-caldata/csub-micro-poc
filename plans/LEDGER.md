@@ -9,11 +9,11 @@ Companion protocol: `plans/README.md`. Wave structure: master plan `docs/specs/0
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: -
-- Last updated: -
-- Next dispatchable tasks: T01.1
+- Wave: B
+- Last updated: 2026-07-18
+- Next dispatchable tasks: T02.1, T02.2, T04.1, T06.1, T08.1, T08.4 (dispatched); then chain successors as lanes clear; T09.1/T09.2/T09.4 early-dispatch eligible in idle slots
 - Open blockers: none
-- Notes: build not started; git repo already initialized on `main` with BRD, docs/, and plans/ committed (T01.1 verifies instead of init)
+- Notes: Wave A complete (T01.4 gate 9/9). Parallel lanes execute in isolated git worktrees; orchestrator merges each task branch to main on acceptance (DEV-03)
 
 ---
 
@@ -37,10 +37,10 @@ Never delete rows. Never re-order. Append-only in Deviations.
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
-| T01.1 | 01-scaffolding/01-repo-toolchain.md | — | - | | |
-| T01.2 | 01-scaffolding/02-config-module.md | T01.1 | - | | |
-| T01.3 | 01-scaffolding/03-logger-stub-and-server.md | T01.2 | - | | |
-| T01.4 | 01-scaffolding/04-acceptance-sweep.md | T01.1–T01.3 | - | | |
+| T01.1 | 01-scaffolding/01-repo-toolchain.md | — | OK | c1df2f6 | devDeps resolved: typescript@7.0.2, tsx@4.23.1, @types/node@22.20.1, @types/ws@8.18.1 |
+| T01.2 | 01-scaffolding/02-config-module.md | T01.1 | OK | eae41ee+61c14ee | DEV-01 (tsconfig types:[node]) + DEV-02 (OIDC required_error) fixed in follow-up; 6/6 tests, typecheck 0 |
+| T01.3 | 01-scaffolding/03-logger-stub-and-server.md | T01.2 | OK | 057adc8 | clean; A2/A3/A4 verified incl. both fail-fast cases |
+| T01.4 | 01-scaffolding/04-acceptance-sweep.md | T01.1–T01.3 | OK | e0cf553 | 9/9 A-matrix pass, no fixes; dev-watcher negative case exits 9 |
 
 Gate: T01.4 = Wave A→B gate (Spec 01 A1–A9 matrix).
 
@@ -181,6 +181,9 @@ Format: `| DEV-NN | date | task | what deviated / why | resolution (respin / pla
 
 | ID | Date | Task | Deviation | Resolution |
 |---|---|---|---|---|
+| DEV-01 | 2026-07-18 | T01.2 | typescript@7.0.2 does not auto-include @types/node under Spec 01 R6 tsconfig — `npm run typecheck` fails TS2503/TS2591 on NodeJS/process | Plan amended: add `"types": ["node"]` to tsconfig compilerOptions (fix committed with T01.2 follow-up) |
+| DEV-02 | 2026-07-18 | T01.2 | Spec 01 R5 OIDC-trap message only fires on present-but-empty AI_GATEWAY_API_KEY; zod default "Required" text on absent key breaks A4 wording | Plan amended: add required_error carrying the OIDC message so absent and empty both name the trap; test asserts /OIDC/ |
+| DEV-03 | 2026-07-18 | Wave B+ | Concurrent lanes cannot share one working tree (repo-wide test/typecheck see half-written files; git index races) | Process: parallel implementers run in isolated worktrees (npm ci per worktree); orchestrator merges each accepted task branch to main before dispatching the lane's next task |
 
 <!-- append rows below; never edit or delete existing rows -->
 
