@@ -48,25 +48,25 @@ Gate: T01.4 = Wave A→B gate (Spec 01 A1–A9 matrix).
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
-| T02.1 | 02-http-twiml/01-state-and-server-skeleton.md | T01 | - | | |
-| T02.2 | 02-http-twiml/02-pending-calls-store.md | T01 | - | | |
-| T02.3 | 02-http-twiml/03-twiml-and-stream-status-routes.md | T02.1, T02.2 | - | | |
-| T02.4 | 02-http-twiml/04-sigterm-drain-shutdown.md | T02.3 | - | | |
-| T04.1 | 04-gateway-leg/01-config-keys.md | T01 | - | | |
-| T04.2 | 04-gateway-leg/02-token-mint.md | T01, T04.1 | - | | |
-| T04.3 | 04-gateway-leg/03-ws-client-leg.md | T04.1, T04.2 | - | | |
-| T04.4 | 04-gateway-leg/04-session-update-greeting.md | T04.3 | - | | |
+| T02.1 | 02-http-twiml/01-state-and-server-skeleton.md | T01 | OK | d65d637 | buildApp/main-guard restructure per pre-declared deviation; marker section in place |
+| T02.2 | 02-http-twiml/02-pending-calls-store.md | T01 | OK | a9cb9a8 | clean; 12/12 tests; timingSafeEqual-only compare verified |
+| T02.3 | 02-http-twiml/03-twiml-and-stream-status-routes.md | T02.1, T02.2 | OK | a0541cb | registerTwimlRoutes(app, config, deps?) per pre-declared deviation; mint merge-marker in twiml.ts ready for Wave B-end swap |
+| T02.4 | 02-http-twiml/04-sigterm-drain-shutdown.md | T02.3 | OK | 83cb520 | deep review APPROVED; Minor (final-review triage): straggler teardown loop unguarded — spec-inherited (Spec 02 R8 snippet); POSIX signal smoke deferred to Railway |
+| T04.1 | 04-gateway-leg/01-config-keys.md | T01 | OK | 3c81b30 | clean additive config/.env.example edits; merged suite 17/17 |
+| T04.2 | 04-gateway-leg/02-token-mint.md | T01, T04.1 | OK | ecf2a3a | mintRealtimeToken(cfg, callSid, modelId?) per pre-declared deviation; factory-form getToken asserted; 7 GatewayError classes mapped |
+| T04.3 | 04-gateway-leg/03-ws-client-leg.md | T04.1, T04.2 | OK | da83107 | ws gotcha found+handled: unexpected-response listener suppresses auto abortHandshake — explicit terminate() required (fold into findings/08 if revisited); TAP reporter under-count quirk disproven via fs-markers |
+| T04.4 | 04-gateway-leg/04-session-update-greeting.md | T04.3 | D | | |
 | T04.5 | 04-gateway-leg/05-dispatch-and-error-policy.md | T04.4 | - | | |
-| T06.1 | 06-audio-dsp/01-mulaw-codec-and-constants.md | T01 | - | | |
-| T06.2 | 06-audio-dsp/02-polyphase-resamplers.md | T06.1 | - | | |
-| T06.3 | 06-audio-dsp/03-transcoder-and-formats.md | T06.2 | - | | |
-| T06.4 | 06-audio-dsp/04-fidelity-and-perf-guards.md | T06.3 | - | | |
-| T06.5 | 06-audio-dsp/05-config-verify-and-readme-m1.md | T06.3, T01 | - | | |
-| T08.1 | 08-logging-latency/01-final-logger.md | T01 | - | | |
-| T08.2 | 08-logging-latency/02-turn-recorder-core.md | T08.1 | - | | |
-| T08.3 | 08-logging-latency/03-greeting-tools-summary.md | T08.2 | - | | |
-| T08.4 | 08-logging-latency/04-aggregation-script.md | T01 | - | | |
-| T08.5 | 08-logging-latency/05-measurements-docs.md | T08.4 | - | | |
+| T06.1 | 06-audio-dsp/01-mulaw-codec-and-constants.md | T01 | OK | 7da20bf | clean; Int16Array -0 gotcha documented for T06.2/3 test authors |
+| T06.2 | 06-audio-dsp/02-polyphase-resamplers.md | T06.1 | OK | 5d24145 | clean; bit-identity + ragged-chunk tests pass; Downsampler3x.reset() verified |
+| T06.3 | 06-audio-dsp/03-transcoder-and-formats.md | T06.2 | OK | 6f98598 | clean; A9 (two resetOutbound call sites) is a T05 review contract |
+| T06.4 | 06-audio-dsp/04-fidelity-and-perf-guards.md | T06.3 | OK | 218b5e2 | THD+N 83-85dB (2kHz anomalously clean), 18.99us/frame vs 500us budget — record for S26; closes Spec 06 A1 |
+| T06.5 | 06-audio-dsp/05-config-verify-and-readme-m1.md | T06.3, T01 | OK | bf30c73 | config.ts no-op confirmed; A2 grep gate was latent-broken by a dsp.ts comment, fixed; README M1 table empty by design |
+| T08.1 | 08-logging-latency/01-final-logger.md | T01 | OK | 2f4c1a9 | logEvent boundary preserved (server.ts zero changes); safeRaw is explicit-call, not auto-applied — downstream loggers of .raw must call it |
+| T08.2 | 08-logging-latency/02-turn-recorder-core.md | T08.1 | OK | 1f8f453 | clean; unmatched-responseId no-op is the marked T08.3 seam (tool-followup/greeting attribution) |
+| T08.3 | 08-logging-latency/03-greeting-tools-summary.md | T08.2 | OK | d236300 | deferred-turn-line mechanism added (timing-impossible otherwise); T05 must call startLoopMonitor() at boot + wire all hooks (Wave D merge item) |
+| T08.4 | 08-logging-latency/04-aggregation-script.md | T01 | OK | d0e73f9 | clean; pooling-not-averaging proven on double-file fixture; R16 adjudicated scope (no audio-mode partition) |
+| T08.5 | 08-logging-latency/05-measurements-docs.md | T08.4 | OK | 09d5493 | clean; S33 checklist must be dated on first deployed build |
 
 Wave-end merge: additive `config.ts`/`.env.example` edits (T04.1, T06.5); Spec 02→04 mint delegation (T02.3's `MintFn` seam → T04.2 `mintRealtimeToken`, one-line swap); T08.1 must have preserved `logEvent` boundary (full `npm test` green).
 
@@ -94,10 +94,10 @@ Wave-end merge: `server.ts` route-registration marker section — T03.2 and T07.
 | T05.2 | 05-session-bridge/02-dispatch-and-epoch.md | T05.1, T03, T04, T06, T08 | - | | |
 | T05.3 | 05-session-bridge/03-turns-and-tool-gate.md | T05.2, T07, T08 | - | | |
 | T05.4 | 05-session-bridge/04-orchestration-and-teardown.md | T05.1–T05.3, T02, T03, T04, T06, T07, T08 | - | | |
-| T09.1 | 09-deployment-ops/01-railway-config-verify.md | T01 | - | | early-dispatch eligible (any wave after T01) |
+| T09.1 | 09-deployment-ops/01-railway-config-verify.md | T01 | OK | e8e80d6 | verify-only; railway.json already conformant; invariants locked by new test |
 | T09.2 | 09-deployment-ops/02-fallback-clip-assets.md | T01 | - | | early-dispatch eligible; needs ffmpeg+TTS on host |
 | T09.3 | 09-deployment-ops/03-fallback-helper.md | T01, T03, T08, T09.2 | - | | |
-| T09.4 | 09-deployment-ops/04-check-credits.md | T01 | - | | early-dispatch eligible |
+| T09.4 | 09-deployment-ops/04-check-credits.md | T01 | OK | 29d8c31 | guard+error paths live-verified; success path deferred to M1 (no real key on host) |
 | T09.5 | 09-deployment-ops/05-runbook.md | T01, T02, T08, T09.3, T09.4 | - | | |
 
 Wave-end merge (orchestrator-applied, gated on spike S23): one-line wiring `playFallbackAndClose` → T05.4's `setOnGatewayFailure` seam. Also: T05.4 may extend `onSessionStart` signature to `(session, pendingCall)` — record against T03 row's Note. `startLoopMonitor()` boot call site added per T08.3 hand-off.
