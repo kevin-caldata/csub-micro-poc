@@ -1,0 +1,3 @@
+{"message":"tool get_current_time round trip","level":"info","ts":"2026-07-18T17:00:25.000Z","callSid":"CAcall1","streamSid":"MZcall1","event":"tool-call","turn":4,"tool":"get_current_time","callId":"call_1","mcpMs":4.2,"gateWaitMs":112.0,"secondTtfbMs":540.8,"toolTotalMs":688.3}
+this is not valid json {broken
+{"message":"tool get_weather round trip","level":"info","ts":"2026-07-18T17:05:25.000Z","callSid":"CAcall2","streamSid":"MZcall2","event":"tool-call","turn":5,"tool":"get_weather","callId":"call_2","mcpMs":6.0,"gateWaitMs":90.0,"secondTtfbMs":600.0,"toolTotalMs":696.0}
