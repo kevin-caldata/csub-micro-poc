@@ -20,6 +20,7 @@ describe('loadConfig', () => {
   it('throws with a clear message when AI_GATEWAY_API_KEY is missing', () => {
     const { AI_GATEWAY_API_KEY: _omit, ...env } = BASE;
     assert.throws(() => loadConfig(env), /AI_GATEWAY_API_KEY/);
+    assert.throws(() => loadConfig(env), /OIDC/);
   });
   it('prefers PUBLIC_HOST over RAILWAY_PUBLIC_DOMAIN', () => {
     const c = loadConfig({ ...BASE, RAILWAY_PUBLIC_DOMAIN: 'x.up.railway.app' });

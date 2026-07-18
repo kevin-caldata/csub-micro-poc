@@ -2,7 +2,10 @@ import { z } from 'zod';
 
 const EnvSchema = z.object({
   AI_GATEWAY_API_KEY: z
-    .string()
+    .string({
+      required_error: 'AI_GATEWAY_API_KEY is required (Vercel dashboard → AI Gateway → API Keys). ' +
+        'Without it the SDK silently falls back to Vercel OIDC, which fails late and obscurely off-Vercel.',
+    })
     .min(1, 'AI_GATEWAY_API_KEY is required (Vercel dashboard → AI Gateway → API Keys). ' +
       'Without it the SDK silently falls back to Vercel OIDC, which fails late and obscurely off-Vercel.'),
   TWILIO_AUTH_TOKEN: z.string().min(1, 'TWILIO_AUTH_TOKEN is required (Twilio Console dashboard).'),
