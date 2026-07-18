@@ -262,6 +262,86 @@ describe('openGatewayLeg — WAIT_FOR_SESSION_UPDATED gate (A5, S6)', () => {
   });
 });
 
+describe('openGatewayLeg — greeting decomposition callbacks (Spec 08 R7 follow-up)', () => {
+  it('immediate path (default WAIT_FOR_SESSION_UPDATED=false): onSessionUpdateSent fires before onGreetingCreateSent; onSessionUpdated fires exactly once when session-updated arrives', async () => {
+    const mock1 = await startMockGateway();
+    const cfg = loadConfig({ ...BASE });
+    const mint: MintResult = { token: 'vcst_test', url: mock1.url, getTokenMs: 0 };
+    const order: string[] = [];
+    let opened = false;
+    let closed = false;
+    const leg = openGatewayLeg({
+      mint,
+      callSid: 'CA-greet-immediate',
+      tools: [],
+      formats: PCMU_FORMATS,
+      config: cfg,
+      callbacks: noopCallbacks({
+        onOpen: () => { opened = true; },
+        onClose: () => { closed = true; },
+        onSessionUpdateSent: () => order.push('sent'),
+        onSessionUpdated: () => order.push('updated'),
+        onGreetingCreateSent: () => order.push('greeting'),
+      }),
+    });
+    try {
+      await waitUntil(() => opened);
+      await waitUntil(() => mock1.frames.length >= 2); // session-update, then response-create
+      assert.deepEqual(order, ['sent', 'greeting'], 'onGreetingCreateSent fires right after the immediate response-create send, with no session-updated wait');
+
+      mock1.send({ type: 'session-updated', raw: {} });
+      await waitUntil(() => order.includes('updated'));
+      assert.deepEqual(order, ['sent', 'greeting', 'updated']);
+
+      // A second session-updated (rare, but the gateway may emit more than one) must not
+      // double-fire the one-shot onSessionUpdated callback.
+      mock1.send({ type: 'session-updated', raw: {} });
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(order.filter((o) => o === 'updated').length, 1);
+    } finally {
+      leg.close();
+      await waitUntil(() => closed, 1000).catch(() => {});
+      await mock1.stop();
+    }
+  });
+
+  it('WAIT_FOR_SESSION_UPDATED=true path: onSessionUpdateSent -> onSessionUpdated -> onGreetingCreateSent fire in that deterministic order', async () => {
+    const mock1 = await startMockGateway();
+    const cfg = loadConfig({ ...BASE, WAIT_FOR_SESSION_UPDATED: 'true' });
+    const mint: MintResult = { token: 'vcst_test', url: mock1.url, getTokenMs: 0 };
+    const order: string[] = [];
+    let opened = false;
+    let closed = false;
+    const leg = openGatewayLeg({
+      mint,
+      callSid: 'CA-greet-wait',
+      tools: [],
+      formats: PCMU_FORMATS,
+      config: cfg,
+      callbacks: noopCallbacks({
+        onOpen: () => { opened = true; },
+        onClose: () => { closed = true; },
+        onSessionUpdateSent: () => order.push('sent'),
+        onSessionUpdated: () => order.push('updated'),
+        onGreetingCreateSent: () => order.push('greeting'),
+      }),
+    });
+    try {
+      await waitUntil(() => opened);
+      await waitUntil(() => mock1.frames.length >= 1); // session-update only — greeting is gated
+      assert.deepEqual(order, ['sent']);
+
+      mock1.send({ type: 'session-updated', raw: {} });
+      await waitUntil(() => order.length === 3);
+      assert.deepEqual(order, ['sent', 'updated', 'greeting']);
+    } finally {
+      leg.close();
+      await waitUntil(() => closed, 1000).catch(() => {});
+      await mock1.stop();
+    }
+  });
+});
+
 describe('openGatewayLeg — GATEWAY_TAGS (S32)', () => {
   it('gatewayTags set: sent config contains providerOptions.gateway.tags', async () => {
     const mock1 = await startMockGateway();

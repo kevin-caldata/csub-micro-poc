@@ -10,6 +10,7 @@ import type { Experimental_RealtimeModelV4ClientEvent as ClientEvent } from '@ai
 import { sessions as stateSessions } from './state.js';
 import { createSession, teardownSession, sessions, type Session } from './sessions.js';
 import { startSessionBridge, setOnGatewayFailure, type SessionBridgeDeps } from './session.js';
+import { onMarkEcho } from './bargein.js';
 import type { PendingCall } from './twiml.js';
 import type { GatewayLeg, OpenGatewayLegOptions } from './gateway.js';
 import { audioFormatsFor } from './dsp.js';
@@ -42,12 +43,21 @@ const fixtureConfig: AppConfig = {
 /** Minimal fake WebSocket — only the surface teardownSession/startSessionBridge touch. */
 function fakeSocket(readyState: number): {
   readyState: number;
+  bufferedAmount: number;
+  sent: string[];
   closeCalls: Array<{ code?: number; reason?: string }>;
+  send: (data: string) => void;
   close: (code?: number, reason?: string) => void;
 } {
   const closeCalls: Array<{ code?: number; reason?: string }> = [];
+  const sent: string[] = [];
   return {
     readyState,
+    bufferedAmount: 0,
+    sent,
+    send(data: string) {
+      sent.push(data);
+    },
     closeCalls,
     close(code?: number, reason?: string) {
       closeCalls.push({ code, reason });
@@ -374,5 +384,80 @@ describe('startSessionBridge — A4 unit analog (isolation)', () => {
     assert.equal(sessions.has('MZ-B'), true);
     assert.equal(socketB.closeCalls.length, 0);
     assert.equal(mcpB.closeCalls.length, 0);
+  });
+});
+
+// Follow-up (Spec 08 R7/A7): gateway.ts now exposes onSessionUpdateSent/onSessionUpdated/
+// onGreetingCreateSent, and startSessionBridge wires them straight to the matching TurnRecorder
+// hooks. This proves the WIRING end to end: replaying the exact callback sequence gateway.ts's
+// closure fires (immediate-greeting path), through a minimal greeting turn (response-created ->
+// audio-delta -> mark echo), yields a 'greeting' line whose newly-wired segment fields are
+// present (numbers), not just the pre-existing gatewayOpenMs.
+describe('startSessionBridge — greeting decomposition wiring (Spec 08 R7 follow-up)', () => {
+  it('the recorder greeting line carries sessionUpdateAckMs/greetingTtfbMs/greetingBridgeMs/greetingPlaybackConfirmMs/greetingTotalMs', async () => {
+    const { session } = makeSession('MZ-greet', 'CA-greet');
+    sessions.set(session.streamSid, session);
+
+    // TurnRecorder's default emit is logEvent -> process.stdout.write; capture that stream the
+    // same way twilio-media.test.ts's spyOnLog()/sessions.test.ts's captureStdout() do, rather
+    // than reach into the recorder's private `emit` field.
+    const originalWrite = process.stdout.write.bind(process.stdout);
+    const chunks: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (process.stdout as any).write = (chunk: any) => {
+      chunks.push(String(chunk));
+      return true;
+    };
+
+    try {
+      const { gw } = await bootstrap(session);
+      const callbacks = gw.captured.opts?.callbacks;
+      assert.ok(callbacks);
+
+      // gatewayOpenMs needs tGatewayOpen stamped first (already-wired T05.4 hook).
+      callbacks!.onOpen();
+
+      // Exactly gateway.ts's own call sequence for the immediate (non-WAIT_FOR_SESSION_UPDATED)
+      // greeting path: session-update sent -> session-updated ack -> greeting response-create sent.
+      callbacks!.onSessionUpdateSent?.();
+      callbacks!.onSessionUpdated?.();
+      callbacks!.onGreetingCreateSent?.();
+
+      // Minimal greeting turn: response-created (attributes via isGreetingResponse, since no
+      // speech-stopped ever opened a real turn) -> audio-delta (stamps tFirstAudioDelta, forwards
+      // to Twilio, pushes the response's first mark) -> that mark's echo (fires emitGreetingLine).
+      const responseId = 'greet-r1';
+      callbacks!.onEvent({ type: 'response-created', responseId, raw: {} } as never);
+      callbacks!.onEvent({ type: 'audio-delta', responseId, itemId: 'greet-item1', delta: 'AAAA', raw: {} } as never);
+
+      const markName = session.firstMarkNameOfResponse;
+      assert.ok(markName, 'expected the greeting audio-delta to have pushed a mark');
+      onMarkEcho(session, markName!);
+
+      const greetingLines = chunks
+        .map((c) => {
+          try {
+            return JSON.parse(c) as Record<string, unknown>;
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((v): v is Record<string, unknown> => v !== undefined && v.event === 'greeting');
+
+      assert.equal(greetingLines.length, 1, 'expected exactly one greeting line to have been emitted');
+      const line = greetingLines[0]!;
+      for (const field of [
+        'gatewayOpenMs',
+        'sessionUpdateAckMs',
+        'greetingTtfbMs',
+        'greetingBridgeMs',
+        'greetingPlaybackConfirmMs',
+        'greetingTotalMs',
+      ]) {
+        assert.equal(typeof line[field], 'number', `${field} must be a present numeric segment`);
+      }
+    } finally {
+      process.stdout.write = originalWrite;
+    }
   });
 });

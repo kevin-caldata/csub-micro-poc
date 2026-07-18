@@ -158,6 +158,20 @@ export interface GatewayLegCallbacks {
   onEvent(ev: ServerEvent): void;
   /** ALWAYS terminal for the call once it fires (Spec 04 R11) — `onOpenFailed` will NOT also fire. */
   onClose(info: { code: number; reason: string }): void;
+  /**
+   * Follow-up (post-T05.4): optional greeting-decomposition hooks (Spec 08 R7/A7) — fired from
+   * the exact points this module's closure already handles the corresponding step, so Spec 05's
+   * Session can feed `TurnRecorder`'s matching hooks without gateway.ts owning any recorder
+   * state itself. All three are optional and optional-chained at every call site — omitting them
+   * is zero behavior change (identical to before this addition).
+   */
+  /** Right after the `session-update` first frame is sent (Spec 04 R8). */
+  onSessionUpdateSent?(): void;
+  /** On the first `session-updated` server event (the same point `pendingGreeting`, if any, fires). */
+  onSessionUpdated?(): void;
+  /** Right after the greeting `response-create` is sent — both the immediate path and the
+   *  `WAIT_FOR_SESSION_UPDATED`-deferred path funnel through this one call site. */
+  onGreetingCreateSent?(): void;
 }
 
 /**
@@ -273,6 +287,10 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
   // R8/S6: when WAIT_FOR_SESSION_UPDATED, the greeting thunk waits here for the FIRST
   // 'session-updated' event (fired once from handleEvent below, then cleared).
   let pendingGreeting: (() => Promise<void>) | undefined;
+  // Follow-up (Spec 08 R7): guards `callbacks.onSessionUpdated` to fire on the FIRST
+  // 'session-updated' event only — the log line above it stays unconditional (existing
+  // behavior, unchanged); only this new optional callback is one-shot.
+  let sessionUpdatedNotified = false;
   // R10/findings/04 G8: per-leg (per-call) rate limiter for `custom` event logging — max 1
   // `gateway-custom` line per `rawType` per second per call (rate_limits.updated alone can
   // flood Railway's 500 lines/s cap in a 5-call test).
@@ -411,6 +429,10 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
         // T04.4's existing test contract) every time. Act: fire the deferred greeting (S6) on
         // the FIRST occurrence only.
         logEvent({ level: 'info', message: 'session-updated', event: 'session-updated', callSid, raw: ev.raw });
+        if (!sessionUpdatedNotified) {
+          sessionUpdatedNotified = true;
+          callbacks.onSessionUpdated?.(); // Spec 08 R7 greeting decomposition (follow-up)
+        }
         if (pendingGreeting) {
           const greet = pendingGreeting;
           pendingGreeting = undefined;
@@ -536,6 +558,7 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
    */
   async function sendFirstFrames(): Promise<void> {
     await send({ type: 'session-update', config: buildCallSessionConfig(tools, formats, config) });
+    callbacks.onSessionUpdateSent?.(); // Spec 08 R7 greeting decomposition (follow-up)
     logEvent({
       level: 'info',
       message: 'session-update sent',
@@ -544,7 +567,13 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
       audioMode: config.audioMode,
       voice: config.voice,
     });
-    const greet = () => send({ type: 'response-create', options: { instructions: GREETING_INSTRUCTIONS } });
+    // Both the immediate call below and the deferred `pendingGreeting` invocation in
+    // handleEvent's 'session-updated' case funnel through this one closure, so
+    // `onGreetingCreateSent` fires from a single call site regardless of path (Spec 08 R7).
+    const greet = () =>
+      send({ type: 'response-create', options: { instructions: GREETING_INSTRUCTIONS } }).then(() => {
+        callbacks.onGreetingCreateSent?.();
+      });
     if (config.waitForSessionUpdated) {
       pendingGreeting = greet; // fired on first 'session-updated' in handleEvent above
     } else {

@@ -432,10 +432,9 @@ export async function startSessionBridge(
   const callbacks: GatewayLegCallbacks = {
     onOpen: () => {
       // Spec 04 owns the session-update + greeting sends; this side only observes the open for
-      // instrumentation (Spec 08 R7's greeting decomposition — the only leg of it this task can
-      // wire without touching gateway.ts, which has no separate session-update-sent/session-
-      // updated/greeting-create-sent callbacks to hook — see the T05.4 completion report's Notes
-      // for the honest scope of what the greeting line captures as a result).
+      // instrumentation. The rest of Spec 08 R7's greeting decomposition (onSessionUpdateSent/
+      // onSessionUpdated/onGreetingCreateSent below) is wired via the follow-up optional
+      // callbacks gateway.ts now exposes from the exact points its closure already handles them.
       session.recorder?.onGatewayOpen();
       session.log('info', 'gateway leg open', { event: 'gateway-leg-open' });
     },
@@ -449,6 +448,19 @@ export async function startSessionBridge(
       teardownSession(session, 'gateway-open-failed');
     },
     onEvent: (ev) => dispatch(session, ev),
+    // Follow-up (Spec 08 R7/A7): the greeting line's remaining segments. Straight pass-through
+    // to the matching TurnRecorder hooks — gateway.ts fires each at the exact point it already
+    // handles the corresponding step (session-update sent, first session-updated, greeting
+    // response-create sent on both the immediate and WAIT_FOR_SESSION_UPDATED-deferred paths).
+    onSessionUpdateSent: () => {
+      session.recorder?.onSessionUpdateSent();
+    },
+    onSessionUpdated: () => {
+      session.recorder?.onSessionUpdated();
+    },
+    onGreetingCreateSent: () => {
+      session.recorder?.onGreetingCreateSent();
+    },
     onClose: (info) => {
       // Spec 05 R11's gateway-close row: log verbatim (this line is additive alongside
       // gateway.ts's own `gateway-close` line — the same "overlap is a pre-existing artifact of
