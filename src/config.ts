@@ -24,6 +24,7 @@ const EnvSchema = z.object({
   GATEWAY_PING_SECONDS: z.coerce.number().int().default(0),
   WAIT_FOR_SESSION_UPDATED: z.enum(['true', 'false']).default('false').transform(v => v === 'true'),
   GATEWAY_TAGS: z.string().optional(),
+  TWILIO_VALIDATE_UPGRADE: z.enum(['true', 'false']).default('false'),
 });
 
 export interface AppConfig {
@@ -45,6 +46,7 @@ export interface AppConfig {
   gatewayPingSeconds: number;
   waitForSessionUpdated: boolean;
   gatewayTags: string[] | undefined;
+  twilioValidateUpgrade: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -80,5 +82,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     gatewayPingSeconds: e.GATEWAY_PING_SECONDS,
     waitForSessionUpdated: e.WAIT_FOR_SESSION_UPDATED,
     gatewayTags: gatewayTags && gatewayTags.length > 0 ? gatewayTags : undefined,
+    twilioValidateUpgrade: e.TWILIO_VALIDATE_UPGRADE === 'true',
   };
 }

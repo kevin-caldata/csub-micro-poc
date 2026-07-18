@@ -57,4 +57,15 @@ describe('loadConfig', () => {
   it('runs in a plain Node environment (G6: no jsdom window)', () => {
     assert.equal((globalThis as Record<string, unknown>).window, undefined);
   });
+  it('TWILIO_VALIDATE_UPGRADE defaults to false (Spec 03 R8, log-only advisory check)', () => {
+    const c = loadConfig({ ...BASE });
+    assert.equal(c.twilioValidateUpgrade, false);
+  });
+  it('TWILIO_VALIDATE_UPGRADE=true parses to true', () => {
+    const c = loadConfig({ ...BASE, TWILIO_VALIDATE_UPGRADE: 'true' });
+    assert.equal(c.twilioValidateUpgrade, true);
+  });
+  it('rejects a garbage TWILIO_VALIDATE_UPGRADE value', () => {
+    assert.throws(() => loadConfig({ ...BASE, TWILIO_VALIDATE_UPGRADE: 'yes' }));
+  });
 });
