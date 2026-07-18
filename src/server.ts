@@ -4,7 +4,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, type AppConfig } from './config.js';
 import { logEvent } from './logger.js';
-import { registerTwimlRoutes, claimPendingCall } from './twiml.js';
+import { registerTwimlRoutes, claimPendingCall, type TwimlDeps } from './twiml.js';
 import { mcpRoutes } from './mcp-server.js';
 import { registerTwilioMediaRoute } from './twilio-media.js';
 import { startSessionBridge, setOnGatewayFailure } from './session.js';
@@ -18,9 +18,26 @@ export interface ShutdownOpts {
   exit?: (code: number) => void;
 }
 
+/**
+ * Deviation-by-design (T10.6, recorded in its completion report — same idiom as
+ * `registerTwimlRoutes(app, config, deps?)`/`startSessionBridge(session, pendingCall, deps?)`
+ * elsewhere in this repo): `buildApp` never mints a real gateway token itself — that already
+ * lives behind `registerTwimlRoutes`'s own `TwimlDeps.mint` seam (Spec 02 T02.3) — but had no way
+ * to REACH that seam from outside `src/server.ts`. Spec 10 R10's `GATEWAY_WS_URL` override only
+ * bypasses `openGatewayLeg`'s socket construction; a live in-process integration test (T10.6's
+ * `test/harness.test.ts`) still needs to avoid the real `mintRealtimeToken`'s network call to the
+ * Vercel AI Gateway. This additive, optional third parameter threads a fake `mint` down to
+ * `registerTwimlRoutes` with zero effect on any existing 2-arg call site (deps undefined ->
+ * `registerTwimlRoutes(app, config, undefined)`, its own pre-existing default-mint fallback).
+ */
+export interface BuildAppDeps {
+  twiml?: TwimlDeps;
+}
+
 export async function buildApp(
   config: AppConfig,
   shutdownOpts?: ShutdownOpts,
+  deps?: BuildAppDeps,
 ): Promise<{ app: FastifyInstance; shutdown: (signal: string) => Promise<void> }> {
   const app = Fastify({
     trustProxy: true, // Railway edge terminates TLS [findings/08 §boot]
@@ -44,7 +61,7 @@ export async function buildApp(
 
   app.get('/health', async () => ({ ok: true }));
 
-  registerTwimlRoutes(app, config);
+  registerTwimlRoutes(app, config, deps?.twiml);
   // --- route registration (Specs 03/07) ---
   registerTwilioMediaRoute(app, {
     config,
