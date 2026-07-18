@@ -145,6 +145,10 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
     // T03.4 sets this true when a `stop` message arrives; used below to distinguish a normal
     // stop-then-close from an abnormal 1006 network drop in the `stream-stop` summary.
     let sawStop = false;
+    // T03.4: fires once, on the first inbound `media` frame, for the S22 cadence log line.
+    // Never set again — no per-frame logging (Railway 500 lines/s cap) [Spec 03 R3 last para,
+    // findings/09 rules].
+    let loggedMediaCadence = false;
     let startTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
       socket.close(1008, 'no start'); // policy violation — no `start` arrived in time
     }, deps.startTimeoutMs ?? START_TIMEOUT_MS);
@@ -275,12 +279,62 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
             break;
           }
 
-          case 'media': // T03.4
-          case 'mark': // T03.4
-          case 'dtmf': // T03.4
+          case 'media': {
+            // Only `track:"inbound"` ever arrives on a bidirectional stream [Spec 03 R4,
+            // findings/03 claim 4]. `media.timestamp` is a wire STRING — Number() it here, once,
+            // at the point of use [Spec 03 R3, findings/03 claim 4/gotcha 4].
+            if (!session) break;
+            session.latestMediaTimestamp = Number(msg.media.timestamp);
+
+            if (!loggedMediaCadence) {
+              loggedMediaCadence = true;
+              // ONE line per call, on the first frame only — spike S22 evidence (handshake
+              // cadence / frame size on this account/region) [Spec 03 R3 last paragraph;
+              // findings/03 claim 8, gotcha open question]. Never per-frame after this.
+              logEvent({
+                level: 'info',
+                message: 'media-cadence',
+                event: 'media-cadence',
+                callSid,
+                streamSid,
+                timestamp: session.latestMediaTimestamp,
+                payloadBytes: Buffer.from(msg.media.payload, 'base64').length,
+              });
+            }
+
+            session.onTwilioMedia?.(msg.media.payload); // spec 05 hook: input-audio-append / DSP
+            break;
+          }
+
+          case 'mark': {
+            // Remove-by-name ONLY, tolerant of unknown/late names — NEVER a bare shift()
+            // [Spec 03 R4 verbatim snippet; findings/04 V7/G2; findings/10 C4]. A mark echo
+            // arriving after a `clear` means "flushed", not "played" — this is exactly why
+            // late/unknown names must be silently ignored rather than corrupt the queue.
+            if (!session) break;
+            const markName = msg.mark.name;
+            const i = session.markQueue.indexOf(markName);
+            if (i !== -1) session.markQueue.splice(i, 1);
+            if (session.markQueue.length === 0) session.onPlaybackDrained?.(); // spec 05: barge-in epoch reset
+            if (isFirstMarkOfResponse(session, markName)) session.onFirstMarkEcho?.(markName); // spec 08: tFirstMarkEcho
+            // Non-first echoes are never logged here [findings/09 rules] — only the
+            // onFirstMarkEcho hook (spec 08's instrumentation) observes any individual echo.
+            break;
+          }
+
+          case 'dtmf':
+            // PoC scope: log-only, no other action [Spec 03 R4; findings/03 claim 4].
+            session?.log('info', 'dtmf', { event: 'dtmf', digit: msg.dtmf.digit });
             break;
 
-          case 'stop': // T03.4 (will set sawStop = true and forward to teardown)
+          case 'stop':
+            // The call/stream ended from Twilio's side. Set the closure flag the `'close'`
+            // listener's `abnormal` computation reads (T03.2), then tear down. The `'close'`
+            // event fires regardless (Twilio closes shortly after `stop`, or we do via
+            // teardownSession below) and emits the `stream-stop` summary line — nothing extra
+            // is logged here [Spec 03 R4/R7; plan T03.4].
+            sawStop = true;
+            if (session) teardownSession(session, 'caller-hangup');
             break;
 
           default: {
