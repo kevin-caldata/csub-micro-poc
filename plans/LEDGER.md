@@ -9,11 +9,11 @@ Companion protocol: `plans/README.md`. Wave structure: master plan `docs/specs/0
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: B
+- Wave: C
 - Last updated: 2026-07-18
-- Next dispatchable tasks: T02.1, T02.2, T04.1, T06.1, T08.1, T08.4 (dispatched); then chain successors as lanes clear; T09.1/T09.2/T09.4 early-dispatch eligible in idle slots
-- Open blockers: none
-- Notes: Wave A complete (T01.4 gate 9/9). Parallel lanes execute in isolated git worktrees; orchestrator merges each task branch to main on acceptance (DEV-03)
+- Next dispatchable tasks: T03.1, T07.1 (dispatched); chains T03.2-.5 and T07.2-.4 follow within lanes
+- Open blockers: T09.2 held — no ffmpeg on host (spoken-fallback clip needs alternative generation or human install)
+- Notes: Waves A+B complete, 129/129 tests. Wave B-end merges applied: mint delegation swap (1c3ee39); config/.env additive merges clean; logEvent boundary intact. T02.4 deep review APPROVED (1 Minor for final review). Worktree isolation per DEV-03. Wave D reminder: wire startLoopMonitor() at boot + fallback seam (S23-gated)
 
 ---
 
@@ -55,8 +55,8 @@ Gate: T01.4 = Wave A→B gate (Spec 01 A1–A9 matrix).
 | T04.1 | 04-gateway-leg/01-config-keys.md | T01 | OK | 3c81b30 | clean additive config/.env.example edits; merged suite 17/17 |
 | T04.2 | 04-gateway-leg/02-token-mint.md | T01, T04.1 | OK | ecf2a3a | mintRealtimeToken(cfg, callSid, modelId?) per pre-declared deviation; factory-form getToken asserted; 7 GatewayError classes mapped |
 | T04.3 | 04-gateway-leg/03-ws-client-leg.md | T04.1, T04.2 | OK | da83107 | ws gotcha found+handled: unexpected-response listener suppresses auto abortHandshake — explicit terminate() required (fold into findings/08 if revisited); TAP reporter under-count quirk disproven via fs-markers |
-| T04.4 | 04-gateway-leg/04-session-update-greeting.md | T04.3 | D | | |
-| T04.5 | 04-gateway-leg/05-dispatch-and-error-policy.md | T04.4 | - | | |
+| T04.4 | 04-gateway-leg/04-session-update-greeting.md | T04.3 | OK | c8897a4 | buildCallSessionConfig(cfg,...) explicit-param per no-singleton rule; pendingGreeting closure fires on first session-updated; one pre-existing leg test updated for auto-sent frames |
+| T04.5 | 04-gateway-leg/05-dispatch-and-error-policy.md | T04.4 | OK | 20b419f | full 23-event dispatch table; BENIGN_ERROR_CODES exported mutable for S11 tuning; Spec 04 complete |
 | T06.1 | 06-audio-dsp/01-mulaw-codec-and-constants.md | T01 | OK | 7da20bf | clean; Int16Array -0 gotcha documented for T06.2/3 test authors |
 | T06.2 | 06-audio-dsp/02-polyphase-resamplers.md | T06.1 | OK | 5d24145 | clean; bit-identity + ragged-chunk tests pass; Downsampler3x.reset() verified |
 | T06.3 | 06-audio-dsp/03-transcoder-and-formats.md | T06.2 | OK | 6f98598 | clean; A9 (two resetOutbound call sites) is a T05 review contract |
