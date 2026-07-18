@@ -29,6 +29,18 @@ export interface FakeGatewayScenario {
    *  plain audio, then a follow-up audio response once the client's gated `response-create`
    *  arrives (R9 tool-call script). */
   toolCall?: boolean;
+  /**
+   * T10.6 follow-up (Spec 10 A6/R12(e)): only meaningful paired with `bargeIn`. Sends the
+   * barge-in-eligible response's ENTIRE pre-interrupt audio-delta run back-to-back at cadence
+   * ~0 (`BURST_DELTA_COUNT` frames, one event-loop tick apart) instead of the default single
+   * delta at `DELTA_CADENCE_MS`. See the doc comment on `BURST_DELTA_COUNT` below for why this
+   * is necessary: without it, the caller-driven fake-twilio client's simulated playback
+   * backlog never exceeds zero by the time the scripted interrupt fires, so the truncate epoch
+   * always finds itself already disarmed (no bug — see `test/harness.test.ts`'s FINDING/
+   * RESOLUTION comment on the barge-in scenario). Existing scenarios (this flag unset) are
+   * byte-for-byte untouched — the burst branch is only reachable when this flag is `true`.
+   */
+  deltaBurst?: boolean;
 }
 
 export interface StartFakeGatewayOptions {
@@ -49,6 +61,23 @@ const FIRST_MESSAGE_TIMEOUT_MS = 5000; // mirrors the real gateway's 30 s rule, 
 const DELTA_CADENCE_MS = 50; // findings/04 D2
 const VAD_TRIGGER_APPEND_COUNT = 25; // R9: "after receiving ≥25 input-audio-append frames"
 const SILENCE_FRAME_B64 = Buffer.alloc(160, 0xff).toString('base64'); // 160 B 0xFF mu-law silence
+
+/**
+ * `scenario.deltaBurst` count (T10.6 follow-up, Spec 10 A6/R12(e)). fake-twilio.ts models
+ * simulated playback with a single running `playheadAtMs` counter that only ever advances by
+ * bytes actually received, starting from the moment the Twilio WS opens — so by the time the
+ * VAD-triggered response's first delta is sent (after the fixed ~500 ms VAD_TRIGGER_APPEND_COUNT
+ * wait plus test-harness bootstrap), that counter is already 800 ms-1 s behind real elapsed
+ * time (empirically measured by polling the live Session while running this exact scenario —
+ * see test/harness.test.ts's comment on the barge-in describe block). One 20 ms delta can never
+ * close an ~1 s deficit, so its mark echoes back (drains the epoch) within single-digit ms —
+ * long before any later scripted step. `BURST_DELTA_COUNT` frames sent back-to-back (2000 ms of
+ * simulated audio) comfortably out-runs that deficit, leaving fake-twilio's simulated buffer
+ * genuinely non-empty ("plays behind what's been delivered") when the interrupt fires shortly
+ * after — the state Session.markQueue/responseStartTimestamp need to be non-empty/armed for a
+ * real conversation-item-truncate to be produced.
+ */
+const BURST_DELTA_COUNT = 100;
 
 /**
  * S5 ASSUMPTION (Spec 10 R9, verbatim from the spec's jsonc block): this exact `session.updated`
@@ -246,6 +275,27 @@ function handleConnection(ws: WSClient, scenario: FakeGatewayScenario, received:
     send({ type: 'response-created', responseId, raw: {} });
     await wait(DELTA_CADENCE_MS);
     send({ type: 'output-item-added', responseId, itemId, raw: {} });
+
+    if (opts.allowBargeIn && scenario.deltaBurst) {
+      // Burst mode (see BURST_DELTA_COUNT's doc comment): send the FULL pre-interrupt
+      // audio-delta run back-to-back at cadence ~0 (one event-loop tick apart), instead of the
+      // single default-cadence delta below. Only reachable when scenario.deltaBurst is set —
+      // every other scenario (including bargeIn without deltaBurst) is untouched by this branch.
+      for (let i = 0; i < BURST_DELTA_COUNT; i++) {
+        send({ type: 'audio-delta', responseId, itemId, delta: SILENCE_FRAME_B64, raw: {} });
+        await wait(0); // one tick — lets fake-twilio's ws actually receive/process each frame in order
+      }
+      // A short real-time gap before the interrupt so a few genuine inbound Twilio frames land
+      // in between (Session.latestMediaTimestamp advances), giving a small, plausible, NONZERO
+      // audioEndMs at truncate time rather than exactly 0 (findings/04 V3: a plausible ongoing
+      // truncate, not an edge case).
+      await wait(DELTA_CADENCE_MS);
+      send({ type: 'speech-started', raw: {} });
+      bargeInItemId = itemId;
+      bargeInResponseId = responseId;
+      expectingTruncate = true;
+      return;
+    }
 
     const deltaCount = 3;
     for (let i = 0; i < deltaCount; i++) {

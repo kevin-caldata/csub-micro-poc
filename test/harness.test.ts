@@ -235,68 +235,104 @@ describe('harness — baseline call (R12 a, b, c, d, g)', () => {
   });
 });
 
-// ── Barge-in scenario (R12 e) — see the CAPTURED FINDING note below ───────────────────────────
+// ── Barge-in scenario (R12 e) ──────────────────────────────────────────────────────────────────
 //
-// FINDING (captured for escalation, not a T05/T07 wiring bug — see this task's Completion
-// Report): the fixed fake-gateway.ts `DELTA_CADENCE_MS` (50 ms per step) sending 160-byte
-// (20 ms-of-audio) deltas, combined with fake-twilio.ts's continuous-real-time playhead model
-// (`playheadAtMs` advances only by bytes actually received, starting from call-open), means
-// audio is scripted to arrive SLOWER than it plays out. Empirically instrumented against the
-// live `Session` (polling `s.markQueue`/`s.responseStartTimestamp` every 5 ms via `src/state.js`
-// while running this exact scenario): the barge-in-eligible response's first (and only, before
-// the scripted interrupt) delta's mark is echoed back — disarming the truncate epoch — within
-// single-digit ms of being sent, i.e. well inside the fixed 50 ms wait before fake-gateway's
-// scripted `speech-started` fires. This reproduced on every run, at every `mediaFrameCount`
-// tried (30-70) — it is a deterministic property of the two already-built T10.5 fixtures'
-// timing constants, not a race. By the time the interrupt fires, `Session.responseStartTimestamp`
-// is already `null` (fully drained) — the CORRECT, spec-mandated, already-unit-tested outcome
-// for that state (`test/bargein.test.ts` "response-created seen, no delta yet: clear sent, NO
-// truncate") is: `clear` sent (a response is still active), no `conversation-item-truncate`.
-// Forcing a genuine "audio still buffered" state would require changing fake-gateway.ts's
-// cadence/frame-size constants or fake-twilio.ts's playhead model — both pinned T10.5
-// interfaces/behavior this task was not chartered to alter. R12(e)'s literal "clear precedes
-// truncate with correct audioEndMs" is therefore NOT exercised by this harness; what IS proven
-// below is the (correct) clear-without-truncate branch of the same bargeIn() code path.
+// FINDING + RESOLUTION (originally captured for escalation, now closed — coordinator-approved
+// follow-up): the fixed fake-gateway.ts `DELTA_CADENCE_MS` (50 ms per step) sending one 160-byte
+// (20 ms-of-audio) delta before the scripted interrupt, combined with fake-twilio.ts's
+// continuous-real-time playhead model (`playheadAtMs` advances only by bytes actually received,
+// starting from call-open), meant audio arrived far SLOWER than it "plays out" by the time the
+// VAD-triggered response's first delta was sent (empirically measured, by polling the live
+// Session's `markQueue`/`responseStartTimestamp` every 5 ms while running this exact scenario:
+// an ~800 ms-1 s deficit had already accrued from the fixed VAD-trigger wait + bootstrap, and a
+// single 20 ms delta could never close it — its mark echoed back, disarming the epoch, within
+// single-digit ms, long before the interrupt fired). That was a deterministic property of the
+// two fixtures' timing constants, not a race, and not a T05/T07 bug (the bridge's
+// clear-without-truncate behavior for that state is the SAME already-unit-tested correct
+// outcome as `test/bargein.test.ts`'s "response-created seen, no delta yet: clear sent, NO
+// truncate").
+//
+// RESOLUTION: `test/fakes/fake-gateway.ts`'s new `scenario.deltaBurst` flag sends the
+// barge-in-eligible response's entire pre-interrupt audio-delta run back-to-back (100 deltas,
+// 2000 ms of simulated audio, cadence ~0) instead of one delta at the default 50 ms cadence —
+// comfortably out-running the ~1 s deficit so fake-twilio's simulated playback buffer is
+// genuinely non-empty (`Session.markQueue` non-empty, `responseStartTimestamp` armed) when the
+// interrupt fires. This exercises the FULL R12(e) contract below.
 
-describe('harness — barge-in scenario (R12 e — partially blocked, see FINDING above)', () => {
+describe('harness — barge-in scenario (R12 e)', () => {
   let h: Harness;
   let capture: CallCapture;
-  let logLines: Record<string, unknown>[];
+  let truncateFoundAtMs: number | undefined;
 
   beforeAll(async () => {
-    h = await bootHarness({ bargeIn: true });
-    const stdout = captureStdout();
-    try {
-      capture = await runFakeCall({
-        baseUrl: h.baseUrl,
-        authToken: AUTH_TOKEN,
-        publicHost: h.publicHost,
-        script: { mediaFrameCount: 70, postMediaWaitMs: 900 } satisfies CallScript,
-      });
-      await new Promise((r) => setTimeout(r, 200)); // see the baseline describe's identical note
-    } finally {
-      logLines = stdout.lines();
-      stdout.restore();
-    }
+    h = await bootHarness({ bargeIn: true, deltaBurst: true });
+
+    // Poll fakeGw.received for the truncate frame, timestamping the instant it is observed.
+    // Any polling latency only makes this timestamp LARGER (later), which biases AGAINST
+    // (never toward) the "clear preceded truncate" assertion below — never a source of flake
+    // in that direction.
+    let stop = false;
+    const poll = (async () => {
+      while (!stop && truncateFoundAtMs === undefined) {
+        const found = h.fakeGw.received.find((f) => isFrame(f, 'conversation-item-truncate'));
+        if (found) {
+          truncateFoundAtMs = Date.now();
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 3));
+      }
+    })();
+
+    capture = await runFakeCall({
+      baseUrl: h.baseUrl,
+      authToken: AUTH_TOKEN,
+      publicHost: h.publicHost,
+      // Generous, continuous streaming so the VAD turn triggers and the burst (2000 ms of
+      // simulated audio) + a short post-burst gap have fresh inbound frames arriving throughout.
+      script: { mediaFrameCount: 90, postMediaWaitMs: 900 } satisfies CallScript,
+    });
+    stop = true;
+    await poll;
   });
 
   afterAll(async () => {
     await teardownHarness(h);
   });
 
-  it('the mid-response speech-started reaches bargeIn(): clear IS sent to the Twilio leg', () => {
-    expect(capture.clears.length, 'expected at least one clear from the scripted mid-response interrupt').toBeGreaterThanOrEqual(1);
+  it('clear (Twilio leg) precedes conversation-item-truncate (gateway leg)', () => {
+    expect(capture.clears.length, 'expected exactly one barge-in clear').toBeGreaterThanOrEqual(1);
+    expect(truncateFoundAtMs, 'expected a conversation-item-truncate frame at the fake gateway').toBeDefined();
+    expect(capture.clears[0]!.receivedAtMs <= truncateFoundAtMs!).toBe(true);
   });
 
-  it('no conversation-item-truncate is sent (epoch already drained — the documented FINDING, not a bug) and the call still ends cleanly', () => {
-    const truncate = h.fakeGw.received.find((f) => isFrame(f, 'conversation-item-truncate'));
-    expect(truncate, 'see FINDING above: this fixture pairing cannot leave audio buffered at the interrupt point').toBeUndefined();
-    // The interrupted response never reaches response-done here (fake-gateway's `ackTruncate`
-    // is what would send it, and it never fires without a truncate to ack) — so the TurnRecorder
-    // summary legitimately has 0 eligible turns (no ttfbP50 key at all — pct() of an empty array
-    // is undefined, dropped by JSON.stringify). Assert the summary line itself still exists.
-    const summary = logLines.find((l) => l.event === 'stream-stop' && typeof l.turns === 'number');
-    expect(summary, 'clean teardown even though the barge-in produced no truncate').toBeTruthy();
+  it('the truncate carries a valid, plausible, per-response audioEndMs', () => {
+    const truncate = h.fakeGw.received.find((f) => isFrame(f, 'conversation-item-truncate')) as
+      | { itemId: string; contentIndex: number; audioEndMs: number }
+      | undefined;
+    expect(truncate).toBeTruthy();
+    expect(truncate!.contentIndex).toBe(0);
+    // Both operands of audioEndMs (Session.latestMediaTimestamp minus the per-response arm
+    // value) are Twilio inbound media.timestamp values, which only ever advance in 20ms steps
+    // (Spec 03 R3) — so a correct implementation's audioEndMs is always a multiple of 20.
+    expect(truncate!.audioEndMs % 20).toBe(0);
+    // Genuinely nonzero — proof the epoch was actually armed with real buffered-audio semantics,
+    // not a degenerate 0-length interrupt. The fake sends its interrupt only ~50ms (one
+    // DELTA_CADENCE_MS step) after the 2000ms burst starts, so a handful of inbound Twilio
+    // frames land in that gap — bounded well under the burst's own 2000ms scripted duration
+    // (i.e. "plausible": > 0, comfortably <= the scripted audio duration, never the
+    // multi-hundred-ms magnitude a stale-epoch bug computed against an EARLIER response would
+    // produce — findings/04 G1; findings/10 C2).
+    expect(truncate!.audioEndMs, 'audioEndMs must be a genuine, nonzero, per-response epoch value').toBeGreaterThan(0);
+    expect(truncate!.audioEndMs, 'audioEndMs must stay within the scripted burst\'s own audio duration').toBeLessThanOrEqual(2000);
+  });
+
+  it('the ack + cancelled response-done complete and the call ends cleanly', () => {
+    // ackTruncate() only fires once a truncate it judges valid arrives — its absence (a
+    // truncate_out_of_range error) would mean the client sent something implausible.
+    const rejection = h.fakeGw.received.find(
+      (f) => isFrame(f, 'error') && String((f as Record<string, unknown>).code) === 'truncate_out_of_range',
+    );
+    expect(rejection, 'the fake must have accepted the truncate, not rejected it').toBeUndefined();
   });
 });
 
