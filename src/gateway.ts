@@ -17,7 +17,7 @@ import type {
   Experimental_RealtimeModelV4ToolDefinition as ToolDefinition,
 } from '@ai-sdk/provider';
 import type { AppConfig } from './config.js';
-import { logEvent, ms, now } from './logger.js';
+import { logEvent, ms, now, safeRaw } from './logger.js';
 
 /**
  * Result of a successful `mintRealtimeToken` call.
@@ -115,6 +115,33 @@ export async function mintRealtimeToken(
     }
     throw new GatewayMintError(errorType, statusCode, getTokenMs, cause);
   }
+}
+
+/**
+ * `error` event benign-code whitelist (Spec 04 R10, S11). Populated after S11 pins real codes
+ * observed through the gateway; starts EMPTY on purpose — never guess strings. Exported
+ * (mutable `Set`) so a unit test can exercise the whitelist branch of `isBenignGatewayError`
+ * without polluting production behavior (S11 policy: no guessed codes ship).
+ */
+export const BENIGN_ERROR_CODES = new Set<string>([]);
+
+/**
+ * Classifies an in-band `error` event as benign (Spec 04 R10, verbatim heuristic). Never used
+ * to close the socket — policy is that NO in-band `error` event ever tears down the call from
+ * this module (R11's `close` event is the sole FR-7 termination signal). Two paths to `true`:
+ * (1) `ev.code` is a pinned member of `BENIGN_ERROR_CODES` (empty until S11), or (2) one of four
+ * documented-benign message-substring classes [findings/04 V4, G3, G6]: cancel-with-no-active-
+ * response, truncate-out-of-range, or an `audio_end_ms` complaint.
+ */
+export function isBenignGatewayError(ev: Extract<ServerEvent, { type: 'error' }>): boolean {
+  if (ev.code && BENIGN_ERROR_CODES.has(ev.code)) return true;
+  const m = ev.message?.toLowerCase() ?? '';
+  return (
+    m.includes('no active response') ||
+    (m.includes('cancel') && m.includes('response')) ||
+    m.includes('audio_end_ms') ||
+    m.includes('truncat')
+  );
 }
 
 /**
@@ -246,6 +273,10 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
   // R8/S6: when WAIT_FOR_SESSION_UPDATED, the greeting thunk waits here for the FIRST
   // 'session-updated' event (fired once from handleEvent below, then cleared).
   let pendingGreeting: (() => Promise<void>) | undefined;
+  // R10/findings/04 G8: per-leg (per-call) rate limiter for `custom` event logging — max 1
+  // `gateway-custom` line per `rawType` per second per call (rate_limits.updated alone can
+  // flood Railway's 500 lines/s cap in a 5-call test).
+  const customLogTimestamps = new Map<string, number>();
 
   // Attach ALL listeners synchronously at construction — an unhandled 'error' crashes the
   // process and kills every concurrent call (findings/08 gotcha 10).
@@ -342,21 +373,153 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
     for (const ev of events) handleEvent(ev);
   });
 
+  /** R10: rate-limits `gateway-custom` logging to max 1 line per `rawType` per second per call. */
+  function shouldLogCustom(rawType: string): boolean {
+    const nowMs = Date.now();
+    const last = customLogTimestamps.get(rawType);
+    if (last !== undefined && nowMs - last < 1000) return false;
+    customLogTimestamps.set(rawType, nowMs);
+    return true;
+  }
+
+  /**
+   * Full 23-event server-event dispatch table (Spec 04 R9/R10, normative for Spec 05). Performs
+   * module-level logging per event class, THEN forwards every event to `callbacks.onEvent` —
+   * Spec 05 implements the "acts"; this module never mutates call state beyond the T04.4
+   * `pendingGreeting` fire folded into `session-updated` below. The switch is exhaustive over
+   * all 23 union members (Spec 04 R9); `default` is unreachable at compile time (pinned SDK
+   * versions make drift impossible there) but still logs defensively — the wire belongs to the
+   * gateway, not us.
+   */
   function handleEvent(ev: ServerEvent): void {
-    // Interim pre-forward check (T04.4 scope): T04.5 folds this into the full R9/R10 dispatch
-    // table. `session-updated` is the only ground truth for the applied audio format/voice
-    // (S1/S2/S8) — log `.raw` verbatim every time, and fire the deferred greeting (S6) on the
-    // FIRST occurrence only.
-    if (ev.type === 'session-updated') {
-      logEvent({ level: 'info', message: 'session-updated', event: 'session-updated', callSid, raw: ev.raw });
-      if (pendingGreeting) {
-        const greet = pendingGreeting;
-        pendingGreeting = undefined;
-        void greet();
+    switch (ev.type) {
+      case 'session-created': {
+        // R9 #1: log once, .raw verbatim (generation-id evidence, S31). No action.
+        logEvent({
+          level: 'info',
+          message: 'gateway-session-created',
+          event: 'gateway-session-created',
+          callSid,
+          sessionId: ev.sessionId,
+          raw: safeRaw(ev.raw),
+        });
+        break;
+      }
+      case 'session-updated': {
+        // R9 #2 (T04.4 scope, folded in here): `.raw` is the only ground truth for the applied
+        // audio format/voice (S1/S2/S5/S8) — logged verbatim (kept as the raw object, matching
+        // T04.4's existing test contract) every time. Act: fire the deferred greeting (S6) on
+        // the FIRST occurrence only.
+        logEvent({ level: 'info', message: 'session-updated', event: 'session-updated', callSid, raw: ev.raw });
+        if (pendingGreeting) {
+          const greet = pendingGreeting;
+          pendingGreeting = undefined;
+          void greet();
+        }
+        break;
+      }
+      // R9 #3-4, 7-10, 14, 16-17, 21 — "act (Session)" rows: Spec 05 implements the acts; this
+      // module performs NO logging for these (absent from R13's inventory) and forwards as-is.
+      case 'speech-started':
+      case 'speech-stopped':
+      case 'response-created':
+      case 'response-done':
+      case 'output-item-added':
+      case 'input-transcription-completed':
+      case 'audio-delta':
+      case 'audio-transcript-delta':
+      case 'audio-transcript-done':
+      case 'function-call-arguments-done':
+        break;
+      // R9 #5: audio-committed — ignore (debug log); informational only. Filtered out under the
+      // default LOG_LEVEL=info (never surfaces as a warn/error line).
+      case 'audio-committed':
+        logEvent({
+          level: 'debug',
+          message: 'gateway-audio-committed',
+          event: 'gateway-audio-committed',
+          callSid,
+          itemId: ev.itemId,
+        });
+        break;
+      // R9 #18-19: text-delta/text-done — ignore (debug); only appear if text modality active
+      // (not requested). Filtered out under the default LOG_LEVEL=info.
+      case 'text-delta':
+      case 'text-done':
+        logEvent({
+          level: 'debug',
+          message: 'gateway-text-ignored',
+          event: 'gateway-text-ignored',
+          callSid,
+          type: ev.type,
+        });
+        break;
+      // R9 #6, 11-13, 15, 20 — consciously ignored, never warn (findings/02 correction 1,
+      // gotcha 7): conversation-item-added, output-item-done, content-part-added,
+      // content-part-done, audio-done, function-call-arguments-delta.
+      case 'conversation-item-added':
+      case 'output-item-done':
+      case 'content-part-added':
+      case 'content-part-done':
+      case 'audio-done':
+      case 'function-call-arguments-delta':
+        break;
+      case 'error': {
+        // R9 #22 / R10: log every in-band error; NEVER close the socket or invoke onClose from
+        // here (that is exclusively R11's `close` event). Benign (whitelist or heuristic) ->
+        // info; everything else -> error. `.raw` verbatim via safeRaw (explicit-call convention).
+        const benign = isBenignGatewayError(ev);
+        logEvent({
+          level: benign ? 'info' : 'error',
+          message: ev.message,
+          event: 'gateway-error-event',
+          callSid,
+          code: ev.code,
+          raw: safeRaw(ev.raw),
+        });
+        break;
+      }
+      case 'custom': {
+        // R9 #23 / R10: always conceptually logged, but rate-limited to max 1 line per rawType
+        // per second per call (findings/04 G8) — forwarding below is UNAFFECTED by the limiter.
+        if (shouldLogCustom(ev.rawType)) {
+          logEvent({
+            level: 'info',
+            message: 'gateway-custom',
+            event: 'gateway-custom',
+            callSid,
+            rawType: ev.rawType,
+            raw: safeRaw(ev.raw),
+          });
+        }
+        break;
+      }
+      default: {
+        // Defensive default: the switch above is exhaustive over the typed 23-member union, so
+        // `ev` narrows to `never` here at compile time — but the wire is the gateway's, and an
+        // actually-unrecognized wire type must not crash the process.
+        const _never: never = ev;
+        const wireType = (_never as unknown as { type: string }).type;
+        logEvent({
+          level: 'error',
+          message: 'gateway-unknown-event',
+          event: 'gateway-unknown-event',
+          callSid,
+          type: wireType,
+        });
+        break;
       }
     }
-    // T04.3 scope ends here; T04.5 inserts the full R9/R10 dispatch table before this forward.
+
     callbacks.onEvent(ev);
+
+    // R10/A8 — S4 fallback matcher: the gateway may deliver caller-speech-start as a `custom`
+    // event carrying the GA OpenAI wire name rather than a normalized `speech-started`
+    // (findings/04 G10 — GA names only, never beta). Deliver a synthetic event on an IDENTICAL
+    // path to the normalized case (#3) by re-entering this same function.
+    if (ev.type === 'custom' && ev.rawType === 'input_audio_buffer.speech_started') {
+      handleEvent({ type: 'speech-started', raw: ev.raw });
+    }
   }
 
   async function send(ev: ClientEvent): Promise<void> {
