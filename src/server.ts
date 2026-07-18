@@ -4,8 +4,9 @@ import fastifyWebsocket from '@fastify/websocket';
 import { pathToFileURL } from 'node:url';
 import { loadConfig, type AppConfig } from './config.js';
 import { logEvent } from './logger.js';
-import { registerTwimlRoutes } from './twiml.js';
+import { registerTwimlRoutes, claimPendingCall } from './twiml.js';
 import { mcpRoutes } from './mcp-server.js';
+import { registerTwilioMediaRoute } from './twilio-media.js';
 import { sessions } from './state.js';
 
 export interface ShutdownOpts {
@@ -42,7 +43,7 @@ export async function buildApp(
 
   registerTwimlRoutes(app, config);
   // --- route registration (Specs 03/07) ---
-  // Spec 03 adds: registerTwilioMediaRoute(app)   — GET /twilio-media { websocket: true }
+  registerTwilioMediaRoute(app, { config, claimPendingCall, onSessionStart: () => {} }); // Spec 05 replaces onSessionStart
   // Spec 07 adds: mcpRoutes(app)                  — POST /mcp (+ 405 GET/DELETE)
   await mcpRoutes(app);
   // -----------------------------------------
