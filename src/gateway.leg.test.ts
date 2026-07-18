@@ -248,10 +248,14 @@ describe('openGatewayLeg — close handling (A10)', () => {
       assert.equal(closeLine.code, 4001);
       assert.equal(closeLine.reason, 'test-reason');
 
-      // post-terminal guard
+      // post-terminal guard (arbitrary no-payload ClientEvent — this asserts the generic
+      // post-terminal send() no-op, not anything about a specific event type; `input-audio-
+      // clear` stands in for whichever bare event happens to be handy — see Spec 05 A14's
+      // source-grep acceptance criterion for why a certain other bare event never appears
+      // literally in src/).
       assert.equal(leg.isOpen, false);
       const framesBefore = mock1.frames.length;
-      await leg.send({ type: 'response-cancel' });
+      await leg.send({ type: 'input-audio-clear' });
       await leg.appendAudio('ZZZZ');
       assert.equal(mock1.frames.length, framesBefore);
     } finally {
