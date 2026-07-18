@@ -86,13 +86,12 @@ export type TwilioInboundMessage =
   | TwilioDtmfMessage;
 
 /**
- * Dependencies injected by `server.ts` (Spec 02 R6 marked section). `twilioValidateUpgrade` is
- * typed optional-boolean here rather than required (the config key itself lands in T03.5's
- * `src/config.ts` change) — declaring it this way lets `Pick<AppConfig, ...>` typecheck against
- * today's `AppConfig` while still accepting tomorrow's field once T03.5 tightens it.
+ * Dependencies injected by `server.ts` (Spec 02 R6 marked section). `config` is tightened to the
+ * exact fields this route reads — `twilioValidateUpgrade` lands in `src/config.ts`'s `AppConfig`
+ * as of T03.5 (Spec 03 R8).
  */
 export interface TwilioMediaDeps {
-  config: Pick<AppConfig, 'publicHost' | 'twilioAuthToken'> & { twilioValidateUpgrade?: boolean };
+  config: Pick<AppConfig, 'publicHost' | 'twilioAuthToken' | 'twilioValidateUpgrade'>;
   claimPendingCall: (candidate: string) => { callSid: string } | undefined;
   onSessionStart: (session: Session) => void;
   /**
@@ -135,6 +134,7 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
         message: 'upgrade signature validation (advisory)',
         event: 'upgrade-signature-check',
         ok,
+        url: wssUrl, // A11: machine-checkable that the wss scheme (never the http(s) upgrade scheme) was used
       });
     }
 
