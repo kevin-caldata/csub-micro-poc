@@ -16,6 +16,7 @@
 // note / master plan single-seam rule) — `src/twilio-media.ts`'s inbound `mark` case delegates
 // to `onMarkEcho` rather than re-implementing the splice (see that file's `mark` case comment).
 
+import WebSocket from 'ws';
 import type { Experimental_RealtimeModelV4ClientEvent as ClientEvent } from '@ai-sdk/provider';
 import { sendMark, sendClear } from './twilio-media.js';
 import type { Session } from './sessions.js';
@@ -27,10 +28,16 @@ import type { Session } from './sessions.js';
  * `bargeIn()` on every effective barge-in and (per Spec 05 R4 rule 1, session.ts's job) on every
  * `response-created` — so "first call since it was last null" is exactly "first mark of the
  * current response", with no separate responseId bookkeeping needed here.
+ *
+ * T05.3 review fix (cosmetic): only arm the field when `sendMark` actually sent something —
+ * `sendMark` itself no-ops on a closed/closing Twilio socket, and a mark name that was never
+ * really sent can never be echoed back, so it must never be recorded as "the first mark to wait
+ * for" (that would permanently starve `tFirstMarkEcho`/the recorder's playback-confirm stamp for
+ * this response instead of leaving it correctly absent).
  */
 export function pushMark(s: Session, name: string): void {
   sendMark(s, name);
-  if (s.firstMarkNameOfResponse == null) {
+  if (s.twilioWs.readyState === WebSocket.OPEN && s.firstMarkNameOfResponse == null) {
     s.firstMarkNameOfResponse = name;
   }
 }

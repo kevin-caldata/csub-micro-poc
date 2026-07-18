@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { dispatch, handleTwilioMedia } from './session.js';
 import { onMarkEcho } from './bargein.js';
 import { createSession, type Session } from './sessions.js';
+import { TurnRecorder } from './latency.js';
 import type { Experimental_RealtimeModelV4ClientEvent as ClientEvent } from '@ai-sdk/provider';
 
 const OPEN = 1;
@@ -227,8 +228,20 @@ describe('dispatch — A13 resetOutbound call-site count (response-created x2 + 
 });
 
 describe('dispatch — outbound flow (send then mark; first-delta logging only)', () => {
-  it('forwards via transcoder.gatewayToTwilio then pushes one mark; logs first-audio-delta/first-twilio-send once, nothing on the second delta', () => {
+  it('forwards via transcoder.gatewayToTwilio then pushes one mark; recorder logs first-audio-delta/first-twilio-send once, nothing on the second delta', () => {
+    // T05.3 update: the direct s.log('first-audio-delta'/'first-twilio-send') calls T05.2 left in
+    // dispatch() were a double-emit once a recorder is attached (T05.2 review finding) — deleted.
+    // `s.recorder` (TurnRecorder) is now the SOLE emitter of these two lines, so this test wires
+    // a real one (same style as session-turns.test.ts) and asserts on its `event` field rather
+    // than the old direct-log `message` string (the recorder's message text differs: "first audio
+    // delta" / "first twilio send", with spaces — the machine-readable `event` field is unchanged
+    // and is the more robust thing to assert on regardless).
     const { s, socket, logs, transcoder } = makeSession();
+    s.recorder = new TurnRecorder({ callSid: s.callSid, streamSid: s.streamSid }, (fields) => {
+      const { level, message, ...rest } = fields;
+      logs.push({ level, message, fields: rest });
+    });
+    dispatch(s, { type: 'speech-stopped', raw: {} }); // opens the turn the recorder attaches to
 
     dispatch(s, { type: 'response-created', responseId: 'X', raw: {} });
     s.latestMediaTimestamp = 200;
@@ -244,15 +257,15 @@ describe('dispatch — outbound flow (send then mark; first-delta logging only)'
     assert.equal(markMsg.event, 'mark');
     assert.equal(markMsg.mark.name, 'rX:1');
 
-    const firstDeltaLines = logs.filter((l) => l.message === 'first-audio-delta');
-    const firstSendLines = logs.filter((l) => l.message === 'first-twilio-send');
+    const firstDeltaLines = logs.filter((l) => l.fields?.event === 'first-audio-delta');
+    const firstSendLines = logs.filter((l) => l.fields?.event === 'first-twilio-send');
     assert.equal(firstDeltaLines.length, 1);
     assert.equal(firstSendLines.length, 1);
 
     // Second delta of the SAME response: no additional first-* log lines.
     dispatch(s, { type: 'audio-delta', responseId: 'X', itemId: 'item1', delta: 'd2', raw: {} });
-    assert.equal(logs.filter((l) => l.message === 'first-audio-delta').length, 1);
-    assert.equal(logs.filter((l) => l.message === 'first-twilio-send').length, 1);
+    assert.equal(logs.filter((l) => l.fields?.event === 'first-audio-delta').length, 1);
+    assert.equal(logs.filter((l) => l.fields?.event === 'first-twilio-send').length, 1);
     assert.equal(socket.sent.length, 4); // second media + mark, no new first-* logs
   });
 });

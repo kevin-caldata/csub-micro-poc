@@ -15,30 +15,38 @@
 //
 // `handleTwilioMedia(session, payloadB64)` is Spec 05 R3's inbound steps 2-4: `latestMediaTimestamp`
 // is already set by Spec 03's `media` case (never set it twice — R3 step 1 stays there).
+//
+// T05.3 reconciliation (review findings on T05.2's dispatch): `TurnRecorder` (`s.recorder`) is now
+// the SOLE source of truth for turn records — this file no longer maintains a parallel
+// `s.currentTurn`/`s.turns` bookkeeping of its own (that was write-only dead state once the
+// recorder's own internal state machine is what stream-stop summaries/percentiles actually read).
+// `s.turnPhase` survives as advisory state-gating only (Spec 05 R10: "the enum never gates
+// bargeIn()") — dispatch still walks it through idle/user-speaking/awaiting-response/responding
+// for readability and any future gating need, but no turn DATA (timestamps/derived metrics) lives
+// on the Session any more; `bargein.ts`'s own `s.currentTurn` read (T05.1, untouched here, its own
+// passing test suite) simply never fires in the live path now that dispatch never populates the
+// field — harmless, and out of this task's scope to change.
+//
+// T05.3 also collapses the audio-delta path to ONE emission per instrumented event: `s.recorder`
+// (once wired) is the only thing that logs `first-audio-delta`/`first-twilio-send` — the direct
+// `s.log(...)` calls T05.2 left alongside `s.recorder?.onAudioDelta(...)` were a double-emit once
+// a recorder is attached (T05.2 review finding). `onFirstTwilioSend` is added as the missing call
+// site so the recorder can actually compute `bridgeMs`/emit that second line itself.
 
 import type { Experimental_RealtimeModelV4ServerEvent as ServerEvent } from '@ai-sdk/provider';
 import type { Session } from './sessions.js';
 import { bargeIn, pushMark } from './bargein.js';
 import { sendMedia, nextMarkName } from './twilio-media.js';
 import { isBenignGatewayError } from './gateway.js';
-import { now, ms, safeRaw } from './logger.js';
-
-/** Pushes a still-open (no `tResponseDone` yet) turn into `turns[]` as incomplete, matching
- *  Spec 05 R10's "close any dangling turn as incomplete" transition on `speech-stopped`. */
-function closeDanglingTurn(s: Session): void {
-  if (s.currentTurn && s.currentTurn.tResponseDone === undefined) {
-    s.turns.push(s.currentTurn);
-  }
-  s.currentTurn = null;
-}
+import { safeRaw } from './logger.js';
 
 /**
  * Single `switch (ev.type)` over the complete 23-member normalized server-event union (Spec 05
  * R2 behavior table, Spec 04 R9 — exact normalized names, exhaustive). Implements the four-point
  * `responseStartTimestamp` epoch (R4: points 1 and 2 live here, point 3 lives in bargein.ts's
  * `onMarkEcho`, point 4 in `bargeIn()` — both already built by T05.1), full-duplex outbound media
- * flow (R3), the `custom`/`error` policies (R7/R9), and the turn-lifecycle bookkeeping (R10) that
- * `bargeIn()` reads (`s.currentTurn.bargedIn`/`.tResponseDone`).
+ * flow (R3), the `custom`/`error` policies (R7/R9), and the turn-lifecycle phase gating (R10,
+ * advisory only — see the T05.3 note above; the turn DATA lives entirely in `s.recorder`).
  */
 export function dispatch(s: Session, ev: ServerEvent): void {
   switch (ev.type) {
@@ -58,8 +66,9 @@ export function dispatch(s: Session, ev: ServerEvent): void {
     }
 
     case 'speech-stopped': {
-      closeDanglingTurn(s);
-      s.currentTurn = { turn: s.turns.length + 1, tSpeechStopped: now(), tools: [], bargedIn: false };
+      // Turn-open bookkeeping (Spec 05 R10 "close dangling turn, open TurnRecord") lives wholly
+      // inside `s.recorder.onSpeechStopped` now (T05.3 — see the file-header note); this case
+      // only advances the advisory phase enum.
       s.turnPhase = 'awaiting-response';
       s.recorder?.onSpeechStopped({ latestMediaTimestamp: s.latestMediaTimestamp });
       break;
@@ -75,10 +84,9 @@ export function dispatch(s: Session, ev: ServerEvent): void {
       s.firstMarkNameOfResponse = null;
       s.transcoder?.resetOutbound(); // no-op in pcmu mode (Spec 06 R11 call site 1 of 2)
 
-      if (s.currentTurn && s.currentTurn.responseId === undefined) {
-        s.currentTurn.responseId = ev.responseId;
-        s.currentTurn.tResponseCreated = now();
-      }
+      // R10 row 3 (responseId attribution) is entirely `s.recorder`'s job now — it owns the
+      // only `currentTurn`/pending-followup/greeting-window state that decides where a
+      // `responseId` attaches (T05.3 — see file-header note).
       s.recorder?.onResponseCreated(ev.responseId);
       break;
     }
@@ -97,24 +105,20 @@ export function dispatch(s: Session, ev: ServerEvent): void {
       }
       s.lastAssistantItemId = ev.itemId;
 
-      if (isFirstDelta && s.currentTurn && s.currentTurn.responseId === undefined) {
-        s.currentTurn.responseId = ev.responseId; // S16 lazy attach into the session's own turn record
-      }
-
-      let ttfbMs: number | undefined;
+      // Advisory phase gate only (R10 row 4) — turn DATA (tFirstAudioDelta/ttfbMs) is stamped
+      // exclusively by `s.recorder.onAudioDelta` below (T05.3 — single source of truth).
       if (isFirstDelta) {
-        const tFirstAudioDelta = now();
         s.turnPhase = 'responding';
-        if (s.currentTurn && s.currentTurn.responseId === ev.responseId) {
-          s.currentTurn.tFirstAudioDelta = tFirstAudioDelta;
-          if (s.currentTurn.tSpeechStopped !== undefined) {
-            ttfbMs = ms(s.currentTurn.tSpeechStopped, tFirstAudioDelta);
-            s.currentTurn.ttfbMs = ttfbMs;
-          }
-        }
-        s.log('info', 'first-audio-delta', { event: 'first-audio-delta', responseId: ev.responseId, ttfbMs });
       }
 
+      // T05.3 single-emission fix: `s.recorder.onAudioDelta` is the ONLY place the
+      // `first-audio-delta` line is emitted (Spec 08 R6.3/R11) — it decides "first" itself
+      // (idempotent per responseId, correlation by responseId per findings/09 gotcha 9), so it
+      // is called on every delta, not just when the session's OWN epoch math says "first".
+      // `s.toolLoop.onAudioDelta` is the separate, ToolLoop-owned lazy follow-up attach (Spec 07
+      // R11.4) that emits its own `tool-call` line — the two never overlap (recorder tracks VAD
+      // turns/greeting only; ToolLoop owns the entire tool round trip per the established rule
+      // that TurnRecorder's tool hooks are not wired from here).
       s.recorder?.onAudioDelta(ev.responseId);
       s.toolLoop?.onAudioDelta(ev.responseId);
 
@@ -127,16 +131,9 @@ export function dispatch(s: Session, ev: ServerEvent): void {
       // (bargein.ts) is the SOLE writer of `firstMarkNameOfResponse` (T05.2 review fix).
       pushMark(s, nextMarkName(s, ev.responseId));
 
-      if (isFirstDelta) {
-        const tFirstTwilioSend = now();
-        let bridgeMs: number | undefined;
-        if (s.currentTurn && s.currentTurn.responseId === ev.responseId && s.currentTurn.tFirstAudioDelta !== undefined) {
-          s.currentTurn.tFirstTwilioSend = tFirstTwilioSend;
-          bridgeMs = ms(s.currentTurn.tFirstAudioDelta, tFirstTwilioSend);
-          s.currentTurn.bridgeMs = bridgeMs;
-        }
-        s.log('info', 'first-twilio-send', { event: 'first-twilio-send', responseId: ev.responseId, bridgeMs });
-      }
+      // T05.3: the missing call site for Spec 08 R8 — stamps tFirstTwilioSend and emits the
+      // `first-twilio-send` line (bridgeMs) exactly once per turn, entirely inside the recorder.
+      s.recorder?.onFirstTwilioSend(ev.responseId);
       break;
     }
 
@@ -168,18 +165,17 @@ export function dispatch(s: Session, ev: ServerEvent): void {
       break;
 
     case 'response-done': {
+      // T05.3 mandated order (Spec 05 R8/R10): (1) responseActive=false so the double gate's
+      // condition (c) is correct the instant it's checked below, (2) notify the recorder (turn
+      // close — the ONLY place turn data/derived metrics/the 'turn' line are computed now), (3)
+      // notify ToolLoop (its deferred-retry re-check of the gate — Spec 07 R12), (4) advance the
+      // advisory phase enum last.
       s.responseActive = false;
-      s.turnPhase = 'idle';
-      if (s.currentTurn && (s.currentTurn.responseId === undefined || s.currentTurn.responseId === ev.responseId)) {
-        s.currentTurn.responseId ??= ev.responseId;
-        s.currentTurn.tResponseDone = now();
-        s.turns.push(s.currentTurn);
-        s.currentTurn = null;
-      }
       s.recorder?.onResponseDone(ev.responseId, ev.status);
       // R8 tool-flow gate: ToolLoop's own onResponseDone re-checks the double gate (Spec 07
       // R12) — nothing more for the session to do; it never sends response-create itself.
       s.toolLoop?.onResponseDone({ responseId: ev.responseId, status: ev.status });
+      s.turnPhase = 'idle';
       break;
     }
 
