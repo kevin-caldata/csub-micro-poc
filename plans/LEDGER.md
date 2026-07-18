@@ -9,11 +9,11 @@ Companion protocol: `plans/README.md`. Wave structure: master plan `docs/specs/0
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: C
+- Wave: D
 - Last updated: 2026-07-18
-- Next dispatchable tasks: T03.1, T07.1 (dispatched); chains T03.2-.5 and T07.2-.4 follow within lanes
-- Open blockers: T09.2 held — no ffmpeg on host (spoken-fallback clip needs alternative generation or human install)
-- Notes: Waves A+B complete, 129/129 tests. Wave B-end merges applied: mint delegation swap (1c3ee39); config/.env additive merges clean; logEvent boundary intact. T02.4 deep review APPROVED (1 Minor for final review). Worktree isolation per DEV-03. Wave D reminder: wire startLoopMonitor() at boot + fallback seam (S23-gated)
+- Next dispatchable tasks: T05.1, T09.2-amended (dispatched); then T05.2→.3→.4 and T09.3→T09.5
+- Open blockers: none (T09.2 unblocked via DEV-04 repo-DSP clip generation)
+- Notes: Waves A-C complete, 204/204 tests, typecheck clean. Wave C marker merge resolved (both route lines). T02.4+T03.4 deep reviews APPROVED (Minors logged for final review). Wave D orchestrator merge items: startLoopMonitor() boot wiring (T08.3), fallback seam playFallbackAndClose→setOnGatewayFailure (S23-gated), possible onSessionStart(session, pendingCall) widening (record on T03 row)
 
 ---
 
@@ -77,8 +77,8 @@ Wave-end merge: additive `config.ts`/`.env.example` edits (T04.1, T06.5); Spec 0
 | T03.1 | 03-twilio-leg/01-sessions-registry.md | T01, T02 | OK | ebc54b2 | clean; createSession({twilioWs,streamSid,callSid,log}); teardownSession(s,reason?,{twilioCloseCode?}) |
 | T03.2 | 03-twilio-leg/02-ws-route-auth-gate.md | T03.1, T02 | OK | e31f9b6 | marker merge resolved (both route lines); startTimeoutMs deps-injected override (injectWS timer incompat); stop-case stub for T03.4; onSessionStart placeholder for T05 |
 | T03.3 | 03-twilio-leg/03-outbound-helpers-backpressure.md | T03.2 | OK | a0ec34c | clean; isFirstMarkOfResponse exported (allowed); firstMarkByResponse Map on Session |
-| T03.4 | 03-twilio-leg/04-inbound-state-machine.md | T03.3 | D | | |
-| T03.5 | 03-twilio-leg/05-upgrade-signature-isolation-sweep.md | T03.4, T01 | - | | |
+| T03.4 | 03-twilio-leg/04-inbound-state-machine.md | T03.3 | OK | 117e3be+283fcd8 | deep review APPROVED (Important fixed: inert @ts-expect-error moved to src/type-assertions.ts, RED-verified); ENV GOTCHA for T10: one injectWS test per file (node:test v22 Windows silent drop, reviewer-reproduced); Minor for final review: 6x test boilerplate dup; Spec 03 R10 missing media-cadence in event list |
+| T03.5 | 03-twilio-leg/05-upgrade-signature-isolation-sweep.md | T03.4, T01 | OK | 913467d+be2308e | clean; TWILIO_VALIDATE_UPGRADE additive; TwilioMediaDeps.config tightened to Pick; T03 complete pending M1 live check |
 | T07.1 | 07-mcp-tools/01-mcp-server-routes.md | T01, T02 | OK | 9b4131f | clean; live-verified 200/405/405; stateless reuse guard proven on concurrent POSTs |
 | T07.2 | 07-mcp-tools/02-mcp-client-and-tool-defs.md | T07.1 | OK | 4b68af0 | clean; $schema/execution stripping asserted; RealtimeToolDef/createMcpClient/closeMcpClient/fetchToolDefs |
 | T07.3 | 07-mcp-tools/03-run-tool-executor.md | T07.2 | OK | 79aef79 | clean; never-throws contract proven incl. transport-failure path |
@@ -90,12 +90,12 @@ Wave-end merge: `server.ts` route-registration marker section — T03.2 and T07.
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
-| T05.1 | 05-session-bridge/01-bargein-and-marks.md | T01, T03, T04, T06 | - | | |
+| T05.1 | 05-session-bridge/01-bargein-and-marks.md | T01, T03, T04, T06 | D | | |
 | T05.2 | 05-session-bridge/02-dispatch-and-epoch.md | T05.1, T03, T04, T06, T08 | - | | |
 | T05.3 | 05-session-bridge/03-turns-and-tool-gate.md | T05.2, T07, T08 | - | | |
 | T05.4 | 05-session-bridge/04-orchestration-and-teardown.md | T05.1–T05.3, T02, T03, T04, T06, T07, T08 | - | | |
 | T09.1 | 09-deployment-ops/01-railway-config-verify.md | T01 | OK | e8e80d6 | verify-only; railway.json already conformant; invariants locked by new test |
-| T09.2 | 09-deployment-ops/02-fallback-clip-assets.md | T01 | - | | early-dispatch eligible; needs ffmpeg+TTS on host |
+| T09.2 | 09-deployment-ops/02-fallback-clip-assets.md | T01 | D | | DEV-04: repo-DSP generation route (no ffmpeg) |
 | T09.3 | 09-deployment-ops/03-fallback-helper.md | T01, T03, T08, T09.2 | - | | |
 | T09.4 | 09-deployment-ops/04-check-credits.md | T01 | OK | 29d8c31 | guard+error paths live-verified; success path deferred to M1 (no real key on host) |
 | T09.5 | 09-deployment-ops/05-runbook.md | T01, T02, T08, T09.3, T09.4 | - | | |
@@ -184,6 +184,7 @@ Format: `| DEV-NN | date | task | what deviated / why | resolution (respin / pla
 | DEV-01 | 2026-07-18 | T01.2 | typescript@7.0.2 does not auto-include @types/node under Spec 01 R6 tsconfig — `npm run typecheck` fails TS2503/TS2591 on NodeJS/process | Plan amended: add `"types": ["node"]` to tsconfig compilerOptions (fix committed with T01.2 follow-up) |
 | DEV-02 | 2026-07-18 | T01.2 | Spec 01 R5 OIDC-trap message only fires on present-but-empty AI_GATEWAY_API_KEY; zod default "Required" text on absent key breaks A4 wording | Plan amended: add required_error carrying the OIDC message so absent and empty both name the trap; test asserts /OIDC/ |
 | DEV-03 | 2026-07-18 | Wave B+ | Concurrent lanes cannot share one working tree (repo-wide test/typecheck see half-written files; git index races) | Process: parallel implementers run in isolated worktrees (npm ci per worktree); orchestrator merges each accepted task branch to main before dispatching the lane's next task |
+| DEV-04 | 2026-07-18 | T09.2 | Host has no ffmpeg for the spoken-fallback clip pipeline | Plan amended: generate 8kHz 16-bit mono WAV via Windows System.Speech (PowerShell), encode to mu-law with the repo's own vendored MULAW_ENC (src/dsp.ts) via a one-off script — no new dependencies |
 
 <!-- append rows below; never edit or delete existing rows -->
 
