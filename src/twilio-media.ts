@@ -13,6 +13,12 @@ const { validateRequest } = twilio;
 import type { AppConfig } from './config.js';
 import { logEvent } from './logger.js';
 import { createSession, teardownSession, sessions, type Session } from './sessions.js';
+// T05.1 reconciliation: the inbound `mark` case below delegates wholly to bargein.ts's
+// `onMarkEcho` (Spec 05 R6 note) rather than re-implementing the remove-by-name splice. This is
+// a deliberate reverse import (Spec 05 depends on Spec 03, not vice versa) — safe under ESM
+// because both modules only call into each other from inside function bodies, never at
+// top-level module-evaluation time.
+import { onMarkEcho } from './bargein.js';
 
 // --- Vendored inbound message types (Spec 03 R3 — exact wire schemas). All numeric-looking
 // fields (`sequenceNumber`, `media.chunk`, `media.timestamp`) are STRINGS on the wire — never
@@ -307,18 +313,17 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
           }
 
           case 'mark': {
-            // Remove-by-name ONLY, tolerant of unknown/late names — NEVER a bare shift()
-            // [Spec 03 R4 verbatim snippet; findings/04 V7/G2; findings/10 C4]. A mark echo
-            // arriving after a `clear` means "flushed", not "played" — this is exactly why
-            // late/unknown names must be silently ignored rather than corrupt the queue.
+            // T05.1 reconciliation (Spec 05 R6 note / master plan single-seam rule): delegates
+            // WHOLLY to bargein.ts's `onMarkEcho` — the sole remove-by-name implementation
+            // process-wide. `onMarkEcho` performs the same splice-by-indexOf (never a bare
+            // shift()), the same drain -> `onPlaybackDrained` + epoch-disarm, and the same
+            // first-mark -> `onFirstMarkEcho` firing that used to live inline here [Spec 03 R4
+            // verbatim snippet superseded; findings/04 V7/G2; findings/10 C4]. A mark echo
+            // arriving after a `clear` means "flushed", not "played" — exactly why unknown/late
+            // names are silently ignored rather than corrupt the queue (onMarkEcho's job).
+            // Non-first echoes are never logged here [findings/09 rules].
             if (!session) break;
-            const markName = msg.mark.name;
-            const i = session.markQueue.indexOf(markName);
-            if (i !== -1) session.markQueue.splice(i, 1);
-            if (session.markQueue.length === 0) session.onPlaybackDrained?.(); // spec 05: barge-in epoch reset
-            if (isFirstMarkOfResponse(session, markName)) session.onFirstMarkEcho?.(markName); // spec 08: tFirstMarkEcho
-            // Non-first echoes are never logged here [findings/09 rules] — only the
-            // onFirstMarkEcho hook (spec 08's instrumentation) observes any individual echo.
+            onMarkEcho(session, msg.mark.name);
             break;
           }
 
@@ -442,6 +447,12 @@ export function nextMarkName(session: Session, responseId: string): string {
   const name = `r${responseId}:${session.markSeq}`;
   if (!session.firstMarkByResponse.has(responseId)) {
     session.firstMarkByResponse.set(responseId, name);
+    // Spec 05 R6.1's single-value "first mark of the CURRENT response" tracker (bargein.ts's
+    // `onMarkEcho` reads this one, not `firstMarkByResponse`) — kept in sync here so callers
+    // that mint names via `nextMarkName` directly (bypassing bargein.ts's `pushMark`) still
+    // get correct `onFirstMarkEcho` firing once the `mark` case below delegates to
+    // `onMarkEcho`. A brand-new responseId is, by construction, the start of a new response.
+    session.firstMarkNameOfResponse = name;
   }
   return name;
 }

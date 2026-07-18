@@ -8,6 +8,9 @@
 import WebSocket from 'ws';
 import { sessions as stateSessions } from './state.js';
 import type { LogLevel } from './logger.js';
+import type { GatewayLeg } from './gateway.js';
+import type { Transcoder } from './dsp.js';
+import type { TurnRecord } from './latency.js';
 
 export interface Session {
   // owned by this spec (Twilio leg)
@@ -50,6 +53,21 @@ export interface Session {
   // module-level (R9 isolation) — so `isFirstMarkOfResponse` can flag `tFirstMarkEcho` without
   // any global map.
   firstMarkByResponse: Map<string, string>;
+
+  // ── T05.1 additive fields (Spec 05 R1) ──────────────────────────────────────────────────
+  // `firstMarkNameOfResponse` is bargein.ts's OWN "first mark of the current response"
+  // tracker (R6.1/R6.2) — distinct from the `firstMarkByResponse` map above (T03's per-
+  // responseId history, kept for `isFirstMarkOfResponse`/T03's existing tests). Always
+  // present, defaulted to null in `createSession` (mirrors `responseStartTimestamp` et al.).
+  firstMarkNameOfResponse: string | null;
+  // `gateway`/`transcoder`/`currentTurn` are Spec 04/06/08 objects `bargeIn()` (Spec 05 R5)
+  // needs on the Session shape but that no task before T05.2 (the full session-assembly
+  // wiring) actually constructs alongside `createSession()` — optional here, following the
+  // same "installed by later specs" idiom as `onTwilioMedia`/`dspState` above, so this
+  // additive edit never breaks T03's existing `createSession()` call sites or tests.
+  gateway?: GatewayLeg;
+  transcoder?: Transcoder;
+  currentTurn?: TurnRecord | null;
 }
 
 // ONE process-wide map: re-exports Spec 02's src/state.ts `sessions` instance verbatim (master
@@ -83,6 +101,7 @@ export function createSession(init: {
     pendingToolCalls: new Map<string, unknown>(),
     timestamps: {},
     firstMarkByResponse: new Map<string, string>(),
+    firstMarkNameOfResponse: null,
     teardown(reason: string) {
       teardownSession(session, reason, { twilioCloseCode: 1001 });
       // 1001 ("going away") because the only external caller of Session.teardown is Spec 02's
