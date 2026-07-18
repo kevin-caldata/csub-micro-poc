@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig, type AppConfig } from './config.js';
 import { logEvent } from './logger.js';
 import { registerTwimlRoutes } from './twiml.js';
+import { mcpRoutes } from './mcp-server.js';
 import { sessions } from './state.js';
 
 export interface ShutdownOpts {
@@ -43,6 +44,7 @@ export async function buildApp(
   // --- route registration (Specs 03/07) ---
   // Spec 03 adds: registerTwilioMediaRoute(app)   — GET /twilio-media { websocket: true }
   // Spec 07 adds: mcpRoutes(app)                  — POST /mcp (+ 405 GET/DELETE)
+  await mcpRoutes(app);
   // -----------------------------------------
 
   // Spec 02 R8 — SIGTERM graceful shutdown: drain FIRST, then close (ordering is load-bearing).
