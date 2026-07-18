@@ -11,6 +11,8 @@ import {
   PCM24K_B64_CHARS_PER_20MS,
   Upsampler3x,
   Downsampler3x,
+  audioFormatsFor,
+  createTranscoder,
 } from './dsp.js';
 
 // Locally re-derived reference decoder (Sun ulaw.c variant, full 16-bit domain,
@@ -289,5 +291,160 @@ describe('Structural contract (A7 resampler half)', () => {
 describe('Frame-length sanity (R12.8 remainder)', () => {
   it('new Upsampler3x().process(new Int16Array(160)).length === 480', () => {
     assert.equal(new Upsampler3x().process(new Int16Array(160)).length, 480);
+  });
+});
+
+// ---- T06.3 test helpers (base64 <-> typed-array conversions matching the wrapper mechanics) ----
+
+/** `Buffer.from(int16.buffer, int16.byteOffset, int16.byteLength).toString('base64')`
+ *  (findings/06 C9 — LE Int16Array views round-trip base64 exactly). */
+function base64FromInt16(pcm: Int16Array): string {
+  return Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString('base64');
+}
+
+function base64FromBytes(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('base64');
+}
+
+function muLawEncodeBytes(pcm: Int16Array): Uint8Array {
+  const mu = new Uint8Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) mu[i] = MULAW_ENC[pcm[i]! & 0xffff]!;
+  return mu;
+}
+
+describe('audioFormatsFor (R2 / A3)', () => {
+  it('pcmu format objects carry NO rate field in either direction', () => {
+    const formats = audioFormatsFor('pcmu');
+    assert.equal('rate' in formats.inputAudioFormat, false);
+    assert.equal('rate' in formats.outputAudioFormat, false);
+    assert.equal(formats.inputAudioFormat.type, 'audio/pcmu');
+    assert.equal(formats.outputAudioFormat.type, 'audio/pcmu');
+    assert.equal(JSON.stringify(formats).includes('"rate"'), false);
+  });
+
+  it('transcode format objects carry rate: 24000 in both directions, type audio/pcm', () => {
+    const formats = audioFormatsFor('transcode');
+    assert.equal(formats.inputAudioFormat.type, 'audio/pcm');
+    assert.equal(formats.outputAudioFormat.type, 'audio/pcm');
+    assert.equal(formats.inputAudioFormat.rate, 24000);
+    assert.equal(formats.outputAudioFormat.rate, 24000);
+    const serialized = JSON.stringify(formats);
+    const rateOccurrences = serialized.match(/"rate":24000/g) ?? [];
+    assert.equal(rateOccurrences.length, 2);
+  });
+});
+
+describe('createTranscoder Path A (pcmu) — zero-copy passthrough (R4, R12.7, A5)', () => {
+  it('twilioToGateway and gatewayToTwilio return the exact same string (identity, not just value)', () => {
+    const t = createTranscoder('pcmu');
+    const s = 'AAAA////deadBEEF0011==';
+    assert.strictEqual(t.twilioToGateway(s), s);
+    assert.strictEqual(t.gatewayToTwilio(s), s);
+  });
+
+  it('mode is pcmu and resetOutbound() does not throw (no-op)', () => {
+    const t = createTranscoder('pcmu');
+    assert.equal(t.mode, 'pcmu');
+    assert.doesNotThrow(() => t.resetOutbound());
+  });
+});
+
+describe('createTranscoder Path B (transcode) — wrapper correctness (R9, findings/06 gotcha 7, C11)', () => {
+  it('twilioToGateway: a 160-byte mu-law frame (encoded 20 ms 1 kHz sine) yields a 1280-char base64 delta bit-identical to direct table+resampler processing', () => {
+    const sinePcm8 = generateSine(1000, 8000, MULAW_BYTES_PER_20MS, 8000);
+    const muBytes = muLawEncodeBytes(sinePcm8);
+    assert.equal(muBytes.length, MULAW_BYTES_PER_20MS);
+    const payloadB64 = base64FromBytes(muBytes);
+
+    const t = createTranscoder('transcode');
+    const outB64 = t.twilioToGateway(payloadB64);
+    assert.equal(outB64.length, PCM24K_B64_CHARS_PER_20MS);
+
+    // Reference: decode the same mu-law bytes and run through a directly-constructed
+    // Upsampler3x — the wrapper must add no header bytes / re-framing (gotcha 7, C11).
+    const refPcm8 = new Int16Array(muBytes.length);
+    for (let i = 0; i < muBytes.length; i++) refPcm8[i] = MULAW_DEC[muBytes[i]!]!;
+    const refPcm24 = new Upsampler3x().process(refPcm8);
+    assert.equal(outB64, base64FromInt16(refPcm24));
+  });
+
+  it('gatewayToTwilio: a 960-byte PCM16LE base64 delta (20 ms @ 24 kHz) yields a 216-char base64 mu-law payload bit-identical to direct resampler+table processing', () => {
+    const sinePcm24 = generateSine(1000, 8000, PCM24K_SAMPLES_PER_20MS, 24000);
+    const deltaB64 = base64FromInt16(sinePcm24);
+
+    const t = createTranscoder('transcode');
+    const outB64 = t.gatewayToTwilio(deltaB64);
+    assert.equal(outB64.length, MULAW_B64_CHARS_PER_20MS);
+
+    const refPcm8 = new Downsampler3x().process(sinePcm24);
+    assert.equal(outB64, base64FromBytes(muLawEncodeBytes(refPcm8)));
+  });
+});
+
+describe('gatewayToTwilio odd-byte-length fallback (R12.9 wrapper half, R9 hard rules)', () => {
+  it('an odd-byte-length delta exercises the copy fallback without throwing, and the following even-length delta is still bit-identical to direct processing (state intact)', () => {
+    const sine24 = generateSine(1000, 8000, PCM24K_SAMPLES_PER_20MS * 2, 24000);
+    const firstChunk = sine24.subarray(0, PCM24K_SAMPLES_PER_20MS);
+    const secondChunk = sine24.subarray(PCM24K_SAMPLES_PER_20MS, PCM24K_SAMPLES_PER_20MS * 2);
+
+    const firstBuf = Buffer.from(firstChunk.buffer, firstChunk.byteOffset, firstChunk.byteLength);
+    const oddBuf = Buffer.concat([firstBuf, Buffer.from([0x00])]); // trailing extra byte -> odd length
+    assert.equal(oddBuf.byteLength % 2, 1, 'sanity: fixture delta must have odd byte length');
+    const oddDeltaB64 = oddBuf.toString('base64');
+    const secondDeltaB64 = base64FromInt16(secondChunk);
+
+    const t = createTranscoder('transcode');
+    let firstOutB64 = '';
+    let secondOutB64 = '';
+    assert.doesNotThrow(() => {
+      firstOutB64 = t.gatewayToTwilio(oddDeltaB64);
+    });
+    assert.doesNotThrow(() => {
+      secondOutB64 = t.gatewayToTwilio(secondDeltaB64);
+    });
+
+    const refDown = new Downsampler3x();
+    const refOut1 = refDown.process(firstChunk); // odd delta's trailing byte is dropped -> same 480 samples
+    const refOut2 = refDown.process(secondChunk);
+
+    assert.equal(firstOutB64, base64FromBytes(muLawEncodeBytes(refOut1)));
+    assert.equal(secondOutB64, base64FromBytes(muLawEncodeBytes(refOut2)));
+  });
+});
+
+describe('Transcoder.resetOutbound (transcode mode) — R11 / A7', () => {
+  it('resetOutbound() makes the next gatewayToTwilio output equal a fresh instance output for the same delta (delegates to down.reset())', () => {
+    const sine24 = generateSine(1000, 8000, PCM24K_SAMPLES_PER_20MS, 24000);
+    const deltaB64 = base64FromInt16(sine24);
+
+    const t = createTranscoder('transcode');
+    t.gatewayToTwilio(deltaB64); // dirty outbound history + phase counter
+    t.resetOutbound();
+    const afterReset = t.gatewayToTwilio(deltaB64);
+
+    const fresh = createTranscoder('transcode');
+    const freshOut = fresh.gatewayToTwilio(deltaB64);
+
+    assert.equal(afterReset, freshOut);
+  });
+
+  it('resetOutbound() leaves inbound (twilioToGateway) continuity unaffected — the inbound upsampler is never reset (R11.1)', () => {
+    const sinePcm8 = generateSine(1000, 8000, MULAW_BYTES_PER_20MS, 8000);
+    const payloadB64 = base64FromBytes(muLawEncodeBytes(sinePcm8));
+
+    const t = createTranscoder('transcode');
+    const in1 = t.twilioToGateway(payloadB64); // primes inbound history
+    t.resetOutbound(); // must touch ONLY the outbound downsampler
+    const in2 = t.twilioToGateway(payloadB64); // second chunk: inbound history from in1 must still apply
+
+    const freshFirstChunk = createTranscoder('transcode').twilioToGateway(payloadB64);
+
+    // in1 is itself a fresh-instance first chunk (no inbound history yet):
+    assert.equal(in1, freshFirstChunk);
+    // in2 carries real inbound history across the resetOutbound() call, so it must differ
+    // from what a fresh (no-history) first chunk would produce for the identical payload —
+    // if resetOutbound() had incorrectly reset the inbound upsampler too, in2 would equal
+    // freshFirstChunk exactly.
+    assert.notEqual(in2, freshFirstChunk);
   });
 });
