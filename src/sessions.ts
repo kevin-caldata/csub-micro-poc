@@ -12,6 +12,7 @@ import type { GatewayLeg } from './gateway.js';
 import type { Transcoder } from './dsp.js';
 import type { TurnRecord, TurnRecorder } from './latency.js';
 import type { ToolLoop } from './tools.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 export interface Session {
   // owned by this spec (Twilio leg)
@@ -82,6 +83,15 @@ export interface Session {
   tStreamStartPerf: number; // performance.now() at 'start' (anchors the media clock, findings/09 §1)
   recorder?: TurnRecorder;
   toolLoop?: ToolLoop;
+
+  // ── T05.4 additive field (Spec 05 R1) ───────────────────────────────────────────────────
+  // Per-call MCP client (Spec 07 R7) — created in `startSessionBridge`, closed in the
+  // teardown funnel via `session.onTeardown`. Deliberately NOT declaring a `heartbeat` field
+  // here even though Spec 05 R1 lists one: the optional gateway ping (Spec 04 R12) owns its
+  // timer entirely inside `openGatewayLeg`'s closure and already clears it on the gateway
+  // leg's own `'close'` handler — there is no Session-level handle to clear, so adding an
+  // always-undefined field here would be dead weight, not a real integration seam.
+  mcpClient?: Client;
 }
 
 // ONE process-wide map: re-exports Spec 02's src/state.ts `sessions` instance verbatim (master

@@ -7,6 +7,7 @@ import { logEvent } from './logger.js';
 import { registerTwimlRoutes, claimPendingCall } from './twiml.js';
 import { mcpRoutes } from './mcp-server.js';
 import { registerTwilioMediaRoute } from './twilio-media.js';
+import { startSessionBridge } from './session.js';
 import { sessions } from './state.js';
 
 export interface ShutdownOpts {
@@ -43,7 +44,14 @@ export async function buildApp(
 
   registerTwimlRoutes(app, config);
   // --- route registration (Specs 03/07) ---
-  registerTwilioMediaRoute(app, { config, claimPendingCall, onSessionStart: () => {} }); // Spec 05 replaces onSessionStart
+  registerTwilioMediaRoute(app, {
+    config,
+    claimPendingCall,
+    // Spec 05's real onSessionStart implementation. Adapted (not passed bare) so it reuses the
+    // config already loaded and validated once at boot above, rather than each call re-parsing
+    // process.env via startSessionBridge's own no-singleton default (Spec 05 T05.4).
+    onSessionStart: (session, pendingCall) => startSessionBridge(session, pendingCall, { config }),
+  });
   // Spec 07 adds: mcpRoutes(app)                  — POST /mcp (+ 405 GET/DELETE)
   await mcpRoutes(app);
   // -----------------------------------------
