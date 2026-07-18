@@ -10,7 +10,8 @@ import { sessions as stateSessions } from './state.js';
 import type { LogLevel } from './logger.js';
 import type { GatewayLeg } from './gateway.js';
 import type { Transcoder } from './dsp.js';
-import type { TurnRecord } from './latency.js';
+import type { TurnRecord, TurnRecorder } from './latency.js';
+import type { ToolLoop } from './tools.js';
 
 export interface Session {
   // owned by this spec (Twilio leg)
@@ -68,6 +69,19 @@ export interface Session {
   gateway?: GatewayLeg;
   transcoder?: Transcoder;
   currentTurn?: TurnRecord | null;
+
+  // ── T05.2 additive fields (Spec 05 R1) ──────────────────────────────────────────────────
+  // `turnPhase`/`turns`/`tStreamStartPerf` complete the R1 shape session.ts's dispatch loop
+  // needs; `currentTurn` above is the field it mutates turn-to-turn. `recorder`/`toolLoop` are
+  // OPTIONAL — dispatch() calls them via `s.recorder?.<hook>`/`s.toolLoop?.<hook>` (Spec 08 R6 /
+  // Spec 07 R10-R14 names) so this file's own `createSession()` (which predates both modules)
+  // never needs to construct them; T05.3/T07's session-assembly task instantiates and assigns
+  // them once wired into the real /twilio-media route.
+  turnPhase: 'idle' | 'user-speaking' | 'awaiting-response' | 'responding';
+  turns: TurnRecord[];
+  tStreamStartPerf: number; // performance.now() at 'start' (anchors the media clock, findings/09 §1)
+  recorder?: TurnRecorder;
+  toolLoop?: ToolLoop;
 }
 
 // ONE process-wide map: re-exports Spec 02's src/state.ts `sessions` instance verbatim (master
@@ -102,6 +116,9 @@ export function createSession(init: {
     timestamps: {},
     firstMarkByResponse: new Map<string, string>(),
     firstMarkNameOfResponse: null,
+    turnPhase: 'idle',
+    turns: [],
+    tStreamStartPerf: performance.now(), // createSession() runs at Twilio 'start' (Spec 03 R4 step 4)
     teardown(reason: string) {
       teardownSession(session, reason, { twilioCloseCode: 1001 });
       // 1001 ("going away") because the only external caller of Session.teardown is Spec 02's

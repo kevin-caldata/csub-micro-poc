@@ -438,31 +438,35 @@ export function hangup(session: Session, code = 1000, reason = 'bye'): void {
 /**
  * Mints the next outbound mark name in the `r<responseId>:<seq>` namespace, `markSeq` being a
  * per-session monotonically increasing counter (NOT per-response) [Spec 03 R5 mark-naming
- * rule; findings/10 T3]. On the first mint for a given `responseId`, records that name as the
- * response's first mark — this doubles as the `tFirstMarkEcho` instrumentation point once
- * T03.4's mark-echo handler calls `isFirstMarkOfResponse` [Spec 03 R5].
+ * rule; findings/10 T3]. On the first mint for a given `responseId`, records that name in
+ * `firstMarkByResponse` (T03's own per-responseId history — see the deprecation note on
+ * `isFirstMarkOfResponse` below).
+ *
+ * T05.2 review fix (single-writer collapse): this function used to ALSO write
+ * `session.firstMarkNameOfResponse` here, duplicating bargein.ts's `pushMark` (Spec 05 R6.1),
+ * which is the field's real writer (session.ts's dispatch loop mints names via `nextMarkName`
+ * and immediately hands them to `pushMark`, never bypassing it). Two writers for one field is
+ * exactly the bug class Spec 05 R4/R6 are careful about elsewhere (the epoch/mark accounting) —
+ * collapsed to `pushMark` as the SOLE writer; this function no longer touches
+ * `firstMarkNameOfResponse` at all.
  */
 export function nextMarkName(session: Session, responseId: string): string {
   session.markSeq += 1;
   const name = `r${responseId}:${session.markSeq}`;
   if (!session.firstMarkByResponse.has(responseId)) {
     session.firstMarkByResponse.set(responseId, name);
-    // Spec 05 R6.1's single-value "first mark of the CURRENT response" tracker (bargein.ts's
-    // `onMarkEcho` reads this one, not `firstMarkByResponse`) — kept in sync here so callers
-    // that mint names via `nextMarkName` directly (bypassing bargein.ts's `pushMark`) still
-    // get correct `onFirstMarkEcho` firing once the `mark` case below delegates to
-    // `onMarkEcho`. A brand-new responseId is, by construction, the start of a new response.
-    session.firstMarkNameOfResponse = name;
   }
   return name;
 }
 
 /**
- * True iff `name` is the first mark name minted for whichever response it belongs to (per the
- * `firstMarkByResponse` bookkeeping `nextMarkName` maintains). Consumed by T03.4's inbound
- * `mark` echo handler to fire `session.onFirstMarkEcho` exactly once per response [Spec 03 R4,
- * R5]. Exported (rather than module-private) so it is directly testable and importable by
- * T03.4 without reaching into this module's closure.
+ * @deprecated Superseded by bargein.ts's `firstMarkNameOfResponse` single-value tracker (Spec 05
+ * R6.1/R6.2), which is what `onMarkEcho` actually reads to fire `onFirstMarkEcho` — the inbound
+ * `mark` case below delegates wholly to `onMarkEcho` and never calls this function (T05.1
+ * reconciliation). No production code path calls `isFirstMarkOfResponse` any more; it is kept
+ * (rather than deleted) only because T03's own unit tests (`twilio-media.outbound.test.ts` et
+ * al.) still exercise it directly against `firstMarkByResponse`'s bookkeeping. Do not add new
+ * call sites — use `firstMarkNameOfResponse` via bargein.ts instead.
  */
 export function isFirstMarkOfResponse(session: Session, name: string): boolean {
   for (const firstName of session.firstMarkByResponse.values()) {

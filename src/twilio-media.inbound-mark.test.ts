@@ -9,7 +9,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import { logEvent } from './logger.js';
 import { sessions } from './state.js';
-import { registerTwilioMediaRoute, nextMarkName, sendMark, type TwilioMediaDeps } from './twilio-media.js';
+import { registerTwilioMediaRoute, nextMarkName, type TwilioMediaDeps } from './twilio-media.js';
+import { pushMark } from './bargein.js';
 import type { Session } from './sessions.js';
 
 async function waitUntil(pred: () => boolean, timeoutMs = 2000, stepMs = 10): Promise<void> {
@@ -103,12 +104,14 @@ describe('registerTwilioMediaRoute — T03.4 mark dispatch (A5, findings/10 C4)'
       };
       session.onFirstMarkEcho = (name) => firstEchoes.push(name);
 
-      // Seed markQueue = ['rA:1', 'rA:2'] via the real nextMarkName + sendMark path so the
-      // first-mark tracker (firstMarkByResponse) is genuinely populated, not hand-faked.
+      // Seed markQueue = ['rA:1', 'rA:2'] via the real nextMarkName + pushMark path — the exact
+      // pairing session.ts's dispatch() uses (T05.2 single-writer collapse: pushMark, not the
+      // raw sendMark, is the SOLE writer of `firstMarkNameOfResponse`, which is what makes
+      // `onFirstMarkEcho` fire below).
       const n1 = nextMarkName(session, 'A');
-      sendMark(session, n1);
+      pushMark(session, n1);
       const n2 = nextMarkName(session, 'A');
-      sendMark(session, n2);
+      pushMark(session, n2);
       assert.deepEqual(session.markQueue, ['rA:1', 'rA:2']);
 
       // Echo rA:1 → queue ['rA:2'], drained not yet fired, first-echo fired once with 'rA:1'.

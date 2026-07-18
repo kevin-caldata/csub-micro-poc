@@ -97,11 +97,13 @@ export function bargeIn(s: Session): void {
         audioEndMs,
       };
       void s.gateway.send(truncate);
-      s.log('info', 'barge-in', {
-        event: 'barge-in',
-        audioEndMs,
-        responseId: s.currentResponseId,
-      });
+      // Single emission path (T05.2 review fix): TurnRecorder.onBargeIn (Spec 08 R6.5) is the
+      // ONE place a 'barge-in' log line is produced — it also computes msSinceFirstSend, which
+      // this module cannot (no tFirstTwilioSend visibility). Emitting a second near-identical
+      // line here would double-log every effective barge-in once T05.3 wires `s.recorder`; until
+      // then (recorder undefined), this is a silent no-op by design, not a regression — the same
+      // "optional chaining, wired later" idiom already used for `s.gateway`/`s.transcoder`.
+      s.recorder?.onBargeIn({ audioEndMs, itemId: s.lastAssistantItemId });
     }
   }
 
