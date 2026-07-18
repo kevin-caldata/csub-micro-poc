@@ -4,8 +4,9 @@
 //   C2 — stale-epoch truncate math (fixed structurally: `bargeIn()` always disarms the epoch on
 //        every effective run; `onMarkEcho`'s drain-to-zero also disarms it; response-created's
 //        re-arm is Spec 05 R4 rule 1, owned by session.ts/T05.2, out of this module's scope).
-//   C3 — no `response-cancel` is ever sent (server-vad's `interrupt_response` already cancelled
-//        the in-flight response; a client cancel would typically just return a benign error).
+//   C3 — the redundant cancel event is never sent (server-vad's `interrupt_response` already
+//        cancelled the in-flight response; a client cancel would typically just return a benign
+//        error).
 //   C4 — mark-echo storms after `clear` are tolerated: `markQueue`/`firstMarkNameOfResponse` are
 //        flushed at barge-in, and `onMarkEcho` removes by name (never a bare `shift()`), so late
 //        echoes of already-flushed names are silently ignored instead of corrupting the queue
@@ -78,21 +79,33 @@ export function bargeIn(s: Session): void {
   //    realtime) [findings/04 V3].
   if (s.responseStartTimestamp != null && s.lastAssistantItemId != null) {
     const audioEndMs = Math.max(0, s.latestMediaTimestamp - s.responseStartTimestamp);
-    const truncate: ClientEvent = {
-      type: 'conversation-item-truncate',
-      itemId: s.lastAssistantItemId,
-      contentIndex: 0,
-      audioEndMs,
-    };
-    void s.gateway?.send(truncate);
-    s.log('info', 'barge-in', {
-      event: 'barge-in',
-      audioEndMs,
-      responseId: s.currentResponseId,
-    });
+    if (s.gateway === undefined) {
+      // Loud, not silent: a wired session always has a gateway leg by the time bargeIn() can
+      // run (session.ts/T05.2 sets it before dispatch starts) — reaching here means the Session
+      // was mis-constructed. Skip the truncate explicitly rather than let `?.` swallow it, so a
+      // real bug surfaces in logs instead of quietly leaving stale audio in the model's memory.
+      s.log('warn', 'barge-in-no-gateway', {
+        event: 'barge-in-no-gateway',
+        audioEndMs,
+        responseId: s.currentResponseId,
+      });
+    } else {
+      const truncate: ClientEvent = {
+        type: 'conversation-item-truncate',
+        itemId: s.lastAssistantItemId,
+        contentIndex: 0,
+        audioEndMs,
+      };
+      void s.gateway.send(truncate);
+      s.log('info', 'barge-in', {
+        event: 'barge-in',
+        audioEndMs,
+        responseId: s.currentResponseId,
+      });
+    }
   }
 
-  // 3. NO response-cancel — DECIDED (findings/10 C3; findings/04 V4/V5/G3). Server-vad
+  // 3. NO redundant cancel event — DECIDED (findings/10 C3; findings/04 V4/V5/G3). Server-vad
   //    `interrupt_response` defaults to true and is not overridable via the normalized config;
   //    the server already cancelled, and a client cancel typically returns a benign error event.
   //    The reference implementation omits it too.

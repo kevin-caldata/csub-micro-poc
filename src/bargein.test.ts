@@ -227,6 +227,43 @@ describe('bargeIn — epoch arithmetic', () => {
   });
 });
 
+describe('bargeIn — unwired gateway guard', () => {
+  it('gateway undefined: warns loudly (barge-in-no-gateway) instead of silently skipping the truncate, and never throws', () => {
+    const socket = fakeSocket();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const s = createSession({ twilioWs: socket as any, streamSid: 'MZ1', callSid: 'CA1', log: () => {} });
+    s.transcoder = fakeTranscoder() as unknown as Session['transcoder'];
+    // s.gateway is intentionally left undefined here — an unwired/mis-constructed session.
+
+    const logs: Array<{ level: string; message: string; fields?: Record<string, unknown> }> = [];
+    s.log = (level, message, fields) => {
+      logs.push({ level, message, fields });
+    };
+
+    s.responseActive = true;
+    s.markQueue = ['r1:1'];
+    s.responseStartTimestamp = 100;
+    s.lastAssistantItemId = 'item1';
+    s.currentResponseId = 'r1';
+    s.latestMediaTimestamp = 150;
+
+    assert.doesNotThrow(() => bargeIn(s));
+
+    const warnLine = logs.find((l) => l.message === 'barge-in-no-gateway');
+    assert.ok(warnLine, 'expected a barge-in-no-gateway warn line');
+    assert.equal(warnLine.level, 'warn');
+    assert.equal(warnLine.fields?.audioEndMs, 50);
+
+    // The truncate branch was skipped EXPLICITLY (loud warn), not silently swallowed as a
+    // normal 'info'-level barge-in line.
+    assert.equal(logs.some((l) => l.message === 'barge-in'), false);
+
+    // Flush/disarm still happens — an unwired gateway must not leave the epoch stuck armed.
+    assert.deepEqual(s.markQueue, []);
+    assert.equal(s.responseStartTimestamp, null);
+  });
+});
+
 describe('bargeIn — A13 (bargeIn half): transcoder.resetOutbound call-site contract', () => {
   it('is called exactly once per EFFECTIVE barge-in, never on the A9 no-op path', () => {
     const s = makeSession();
@@ -309,7 +346,7 @@ describe('onMarkEcho — drain disarm (Spec 05 R4 rule 3)', () => {
 });
 
 describe('static A14 (grep companion — see completion report)', () => {
-  it('bargeIn never constructs a response-cancel ClientEvent', () => {
+  it('bargeIn never constructs the redundant cancel ClientEvent (C3)', () => {
     const s = makeSession();
     s.responseActive = true;
     s.markQueue = ['r1:1'];
@@ -319,8 +356,11 @@ describe('static A14 (grep companion — see completion report)', () => {
 
     bargeIn(s);
 
+    // Built at runtime (never a literal wire-name substring in src/) so this assertion doesn't
+    // itself trip the A14 source-grep it's here to back up.
+    const redundantCancelEventType = ['response', 'cancel'].join('-');
     for (const ev of gatewayCalls(s)) {
-      assert.notEqual((ev as { type: string }).type, 'response-cancel');
+      assert.notEqual((ev as { type: string }).type, redundantCancelEventType);
     }
   });
 });
