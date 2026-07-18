@@ -74,15 +74,15 @@ Wave-end merge: additive `config.ts`/`.env.example` edits (T04.1, T06.5); Spec 0
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
-| T03.1 | 03-twilio-leg/01-sessions-registry.md | T01, T02 | - | | |
-| T03.2 | 03-twilio-leg/02-ws-route-auth-gate.md | T03.1, T02 | - | | |
-| T03.3 | 03-twilio-leg/03-outbound-helpers-backpressure.md | T03.2 | - | | |
-| T03.4 | 03-twilio-leg/04-inbound-state-machine.md | T03.3 | - | | |
+| T03.1 | 03-twilio-leg/01-sessions-registry.md | T01, T02 | OK | ebc54b2 | clean; createSession({twilioWs,streamSid,callSid,log}); teardownSession(s,reason?,{twilioCloseCode?}) |
+| T03.2 | 03-twilio-leg/02-ws-route-auth-gate.md | T03.1, T02 | OK | e31f9b6 | marker merge resolved (both route lines); startTimeoutMs deps-injected override (injectWS timer incompat); stop-case stub for T03.4; onSessionStart placeholder for T05 |
+| T03.3 | 03-twilio-leg/03-outbound-helpers-backpressure.md | T03.2 | OK | a0ec34c | clean; isFirstMarkOfResponse exported (allowed); firstMarkByResponse Map on Session |
+| T03.4 | 03-twilio-leg/04-inbound-state-machine.md | T03.3 | D | | |
 | T03.5 | 03-twilio-leg/05-upgrade-signature-isolation-sweep.md | T03.4, T01 | - | | |
-| T07.1 | 07-mcp-tools/01-mcp-server-routes.md | T01, T02 | - | | |
-| T07.2 | 07-mcp-tools/02-mcp-client-and-tool-defs.md | T07.1 | - | | |
-| T07.3 | 07-mcp-tools/03-run-tool-executor.md | T07.2 | - | | |
-| T07.4 | 07-mcp-tools/04-tool-loop-state-machine.md | T07.3, T08 | - | | |
+| T07.1 | 07-mcp-tools/01-mcp-server-routes.md | T01, T02 | OK | 9b4131f | clean; live-verified 200/405/405; stateless reuse guard proven on concurrent POSTs |
+| T07.2 | 07-mcp-tools/02-mcp-client-and-tool-defs.md | T07.1 | OK | 4b68af0 | clean; $schema/execution stripping asserted; RealtimeToolDef/createMcpClient/closeMcpClient/fetchToolDefs |
+| T07.3 | 07-mcp-tools/03-run-tool-executor.md | T07.2 | OK | 79aef79 | clean; never-throws contract proven incl. transport-failure path |
+| T07.4 | 07-mcp-tools/04-tool-loop-state-machine.md | T07.3, T08 | OK | 00e3a96 | Spec 07 complete. T05 MUST reconcile: ToolLoop emits its own tool-call line vs TurnRecorder's parallel hooks — wire one, not both (double-log risk); ToolLoop is one-per-call w/ resetCycle |
 
 Wave-end merge: `server.ts` route-registration marker section — T03.2 and T07.1 each add exactly one line; confirm both lines present, no duplicate `@fastify/websocket` registration.
 
