@@ -50,6 +50,23 @@ export interface Session {
   // handle so teardown can clear it.
   startTimer?: ReturnType<typeof setTimeout>;
 
+  // ── findings/18 additive field (31924 investigation — log-only burst-shape evidence) ──────
+  // Per-response outbound-media accumulator (session.ts's `audio-delta` case is the sole
+  // writer): counts sends/bytes/span for the response CURRENTLY streaming to Twilio. Read once
+  // and cleared to `null` at that response's `response-done` (emits the one-line
+  // `outbound-burst` log, adjacent to the `turn` line so both share `responseId`). Never
+  // consulted for pacing/chunking decisions — `sendMedia`'s send path is completely unaware of
+  // this field; it exists purely so a live 31924 can be correlated against actual burst shape
+  // (findings/18 "How to verify live" step 1) without changing send behavior.
+  outboundBurst?: {
+    responseId: string;
+    deltaCount: number;
+    totalBytes: number;
+    maxDeltaBytes: number;
+    firstSendPerf: number;
+    lastSendPerf: number;
+  } | null;
+
   // internal, this-spec-only (not a cross-spec contract): T03.3's mark-naming rule (Spec 03
   // R5) tracks the first mark name minted per responseId here — per-session state, never
   // module-level (R9 isolation) — so `isFirstMarkOfResponse` can flag `tFirstMarkEcho` without

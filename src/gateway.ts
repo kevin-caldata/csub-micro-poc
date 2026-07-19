@@ -126,10 +126,32 @@ export async function mintRealtimeToken(
 export const BENIGN_ERROR_CODES = new Set<string>([]);
 
 /**
+ * S11 tuning (live-call evidence, call CAd9fff35837be498644789a9d485bf594): the gateway's actual
+ * truncate-out-of-range wording is `"Audio content of <N>ms is already shorter than <M>ms"` with
+ * `code: 'invalid_value'` — it contains neither `truncat` nor `audio_end_ms`, so it fell through
+ * every existing substring class below and was misclassified non-benign. This is precisely the
+ * out-of-range race G6/R9 anticipated (a mark echo lagging behind real playback-finish, or the
+ * final ~ms window) — the audio has already finished playing, so nothing needed truncating; the
+ * gateway's complaint is functionally a no-op, never a reason to tear the call down.
+ *
+ * Deliberately code-AND-message scoped (never a blanket `BENIGN_ERROR_CODES.add('invalid_value')`
+ * — `invalid_value` also covers real caller-facing mistakes, e.g. a malformed tool argument,
+ * that must stay fatal): only THIS exact message shape, under THIS exact code, is benign.
+ *
+ * Review follow-up (tightened): matches the FULL production shape (`Audio content of <N>ms is
+ * already shorter than <M>ms`), not the bare `already shorter than` substring — the loose version
+ * would have silently swallowed any unrelated future `invalid_value` error that happens to contain
+ * that phrase (e.g. in an entirely different field's validation message).
+ */
+function isTruncateOvershootError(ev: Extract<ServerEvent, { type: 'error' }>): boolean {
+  return ev.code === 'invalid_value' && /audio content of \d+ms is already shorter than \d+ms/i.test(ev.message ?? '');
+}
+
+/**
  * Classifies an in-band `error` event as benign (Spec 04 R10, verbatim heuristic). Never used
  * to close the socket — policy is that NO in-band `error` event ever tears down the call from
- * this module (R11's `close` event is the sole FR-7 termination signal). Two paths to `true`:
- * (1) `ev.code` is a pinned member of `BENIGN_ERROR_CODES` (empty until S11), or (2) one of five
+ * this module (R11's `close` event is the sole FR-7 termination signal). Three paths to `true`:
+ * (1) `ev.code` is a pinned member of `BENIGN_ERROR_CODES` (empty until S11), (2) one of five
  * documented-benign message-substring classes [findings/04 V4, G3, G6; findings/04 §create-while-
  * active + Spec 07 R12]: cancel-with-no-active-response, truncate-out-of-range, an
  * `audio_end_ms` complaint, or a lost-race create-while-active complaint ("already has an active
@@ -137,10 +159,11 @@ export const BENIGN_ERROR_CODES = new Set<string>([]);
  * when its own `response-create` loses a race against a VAD-auto response (findings review: this
  * substring previously matched none of the classes above, so a lost gate race classified as
  * non-benign and `session.ts` tore the call down mid-tool-answer instead of letting the deferred
- * retry engage).
+ * retry engage), or (3) the S11 truncate-overshoot shape above (`isTruncateOvershootError`).
  */
 export function isBenignGatewayError(ev: Extract<ServerEvent, { type: 'error' }>): boolean {
   if (ev.code && BENIGN_ERROR_CODES.has(ev.code)) return true;
+  if (isTruncateOvershootError(ev)) return true;
   const m = ev.message?.toLowerCase() ?? '';
   return (
     m.includes('no active response') ||
