@@ -11,7 +11,7 @@
 // (findings/09 gotcha 13; Spec 08 R12/R16).
 //
 // Usage:
-//   node scripts/aggregate-latency.mjs [--tools] [--metric <name>] <file.jsonl> [more.jsonl...]
+//   node scripts/aggregate-latency.mjs [--tools|--knowledge] [--metric <name>] <file.jsonl> [more.jsonl...]
 
 import { readFileSync } from 'node:fs';
 
@@ -25,28 +25,32 @@ function pct(values, p) {
 
 const TURN_METRICS = ['ttfbMs', 'bridgeMs', 'turnMs', 'playbackConfirmMs'];
 const TOOL_METRICS = ['mcpMs', 'gateWaitMs', 'secondTtfbMs', 'toolTotalMs'];
+const KNOWLEDGE_METRICS = ['knowledgeMs'];
 
 function usage() {
   process.stderr.write(
-    'Usage: node scripts/aggregate-latency.mjs [--tools] [--metric <name>] <file.jsonl> [more.jsonl...]\n',
+    'Usage: node scripts/aggregate-latency.mjs [--tools|--knowledge] [--metric <name>] <file.jsonl> [more.jsonl...]\n',
   );
 }
 
 function parseArgs(argv) {
   let tools = false;
+  let knowledge = false;
   let metric;
   const files = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--tools') {
       tools = true;
+    } else if (arg === '--knowledge') {
+      knowledge = true;
     } else if (arg === '--metric') {
       metric = argv[++i];
     } else {
       files.push(arg);
     }
   }
-  return { tools, metric, files };
+  return { tools, knowledge, metric, files };
 }
 
 function readLines(files) {
@@ -108,7 +112,12 @@ function renderMarkdownTable(rows) {
 }
 
 function main() {
-  const { tools, metric, files } = parseArgs(process.argv.slice(2));
+  const { tools, knowledge, metric, files } = parseArgs(process.argv.slice(2));
+  if (tools && knowledge) {
+    usage();
+    process.exitCode = 1;
+    return;
+  }
   if (files.length === 0) {
     usage();
     process.exitCode = 1;
@@ -116,16 +125,20 @@ function main() {
   }
 
   const lines = readLines(files);
-  const wantEvent = tools ? 'tool-call' : 'turn';
+  const wantEvent = knowledge ? 'knowledge-call' : tools ? 'tool-call' : 'turn';
   const { records, skipped } = parseLines(lines, wantEvent);
-  const allMetrics = tools ? TOOL_METRICS : TURN_METRICS;
+  const allMetrics = knowledge ? KNOWLEDGE_METRICS : tools ? TOOL_METRICS : TURN_METRICS;
   const metrics = metric ? allMetrics.filter((m) => m === metric) : allMetrics;
 
   const output = [];
   output.push(`Skipped: ${skipped} non-JSON line(s).`);
   output.push('');
 
-  if (tools) {
+  if (knowledge) {
+    output.push('## knowledge-call metrics');
+    output.push('');
+    output.push(renderMarkdownTable(tableForMetrics(records, metrics)));
+  } else if (tools) {
     output.push('## tool-call metrics');
     output.push('');
     output.push(renderMarkdownTable(tableForMetrics(records, metrics)));
