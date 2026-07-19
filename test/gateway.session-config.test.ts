@@ -423,3 +423,88 @@ describe('openGatewayLeg — session-update-sent log line (Spec 04 R13)', () => 
     }
   });
 });
+
+describe('RIO persona — instruction and greeting content (Demo Spec 01 A3–A6)', () => {
+  it('INSTRUCTIONS contains the RIO content anchors (A3)', () => {
+    expect(INSTRUCTIONS).toContain('NEVER answer campus facts from memory');
+    expect(INSTRUCTIONS).toContain('ask_campus_knowledge');
+    expect(INSTRUCTIONS).toContain('route_call');
+    expect(INSTRUCTIONS).toContain('escalate_to_human');
+    expect(INSTRUCTIONS).toContain('verify_identity');
+    expect(INSTRUCTIONS).toContain('reset_password');
+    expect(INSTRUCTIONS).toContain('send_sms');
+    expect(INSTRUCTIONS).toContain('get_current_time');
+    expect(INSTRUCTIONS).toContain('C-S-U-B');
+    expect(INSTRUCTIONS).toContain('REE-oh');
+    expect(INSTRUCTIONS).toContain('not_found');
+    expect(INSTRUCTIONS).toContain('(661) 654-3366');
+    expect(INSTRUCTIONS).toContain('988');
+    expect(INSTRUCTIONS).toContain('(661) 654-2111');
+    expect(INSTRUCTIONS).toContain('Never switch languages based on accent alone');
+  });
+
+  it('every snake_case token in INSTRUCTIONS is a registered tool name or not_found (A4)', () => {
+    const allow = new Set([
+      'ask_campus_knowledge',
+      'route_call',
+      'escalate_to_human',
+      'verify_identity',
+      'reset_password',
+      'send_sms',
+      'get_current_time',
+      'not_found',
+    ]);
+    const tokens = INSTRUCTIONS.match(/\b[a-z]+(_[a-z]+)+\b/g) ?? [];
+    expect(tokens.length).toBeGreaterThan(0);
+    for (const token of tokens) {
+      expect(allow.has(token), `unexpected snake_case token in INSTRUCTIONS: ${token}`).toBe(true);
+    }
+    const tokenSet = new Set(tokens);
+    expect(tokenSet.has('ask_campus_knowledge')).toBe(true);
+    expect(tokenSet.has('route_call')).toBe(true);
+    expect(tokenSet.has('escalate_to_human')).toBe(true);
+    expect(tokenSet.has('verify_identity')).toBe(true);
+    expect(tokenSet.has('reset_password')).toBe(true);
+    expect(tokenSet.has('send_sms')).toBe(true);
+    expect(tokenSet.has('get_current_time')).toBe(true);
+    expect(INSTRUCTIONS).not.toContain('hello');
+    expect(INSTRUCTIONS).not.toContain('lookup_campus_info');
+  });
+
+  it('greeting response-create instructions carry AI self-ID and simulated disclosure (A5)', async () => {
+    const mock1 = await startMockGateway();
+    const cfg = loadConfig({ ...BASE });
+    const mint: MintResult = { token: 'vcst_test', url: mock1.url, getTokenMs: 0 };
+    let opened = false;
+    let closed = false;
+    const leg = openGatewayLeg({
+      mint,
+      callSid: 'CA-a5-persona',
+      tools: TOOLS,
+      formats: PCMU_FORMATS,
+      config: cfg,
+      callbacks: noopCallbacks({ onOpen: () => { opened = true; }, onClose: () => { closed = true; } }),
+    });
+    try {
+      await waitUntil(() => opened);
+      await waitUntil(() => mock1.frames.length >= 2);
+      const [, frame2] = mock1.frames as [Record<string, unknown>, Record<string, unknown>];
+
+      expect(frame2.type).toBe('response-create');
+      const options = frame2.options as Record<string, unknown>;
+      const instructions = options.instructions as string;
+      expect(typeof instructions).toBe('string');
+      expect(instructions).toContain("I'm an AI assistant");
+      expect(instructions).toContain('everything I look up is simulated');
+      expect(instructions).toContain('RIO, the Roadrunner Intelligent Operator');
+    } finally {
+      leg.close();
+      await waitUntil(() => closed, 1000).catch(() => {});
+      await mock1.stop();
+    }
+  });
+
+  it('INSTRUCTIONS stays under the 6000-character compactness budget (A6)', () => {
+    expect(INSTRUCTIONS.length).toBeLessThan(6000);
+  });
+});
