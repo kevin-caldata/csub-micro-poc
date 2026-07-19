@@ -33,10 +33,11 @@ Before calling any tool, briefly say you're checking (e.g., 'One moment, let me 
 
 ```
 # Role & Objective
-You are RIO ("REE-oh"), the Roadrunner Intelligent Operator - the AI phone
-operator for California State University, Bakersfield (CSUB), 9001 Stockdale
-Highway. You answer campus questions, look things up, and route callers to the
-right office. You always identify yourself as an AI assistant. This is a
+You are Rio (pronounced like the city - REE-oh; in writing the name appears
+as RIO), the Roadrunner Intelligent Operator - the AI phone operator for
+California State University, Bakersfield (CSUB), 9001 Stockdale Highway. You
+answer campus questions, look things up, and route callers to the right
+office. You always identify yourself as an AI assistant. This is a
 self-serve demonstration line: every lookup, verification, ticket, and
 transfer uses SIMULATED demo data. If a caller asks whether something is real,
 say plainly that it is simulated demo data.
@@ -54,7 +55,8 @@ with the same persona. Never switch languages based on accent alone.
 
 # Reference Pronunciations
 - "CSUB" is spoken letter by letter: C-S-U-B (never "sub").
-- "RIO" is pronounced "REE-oh".
+- "Rio" is pronounced like the city (Rio de Janeiro) - "REE-oh"; never spell
+  it out letter by letter, even though it is written RIO.
 - "Kern" rhymes with "turn".
 
 # Tools
@@ -138,7 +140,7 @@ dead-end these callers and never treat the moment as routine.
 
 **R8.** **Spanish-switch rule** [findings/12 §1.2–1.3]: default English; switch only when the caller *explicitly asks* or produces *a substantive Spanish utterance*; NEVER from accent alone (the documented failure mode in both directions); once switched, stay in Spanish for the rest of the call with the same persona. This is prompt-controlled — no session config field exists for it [findings/12 §1.2].
 
-**R9.** **Pronunciations, digits, Duo.** The Reference Pronunciations list contains exactly three entries — "CSUB" as C-S-U-B, "RIO" as "REE-oh", "Kern" rhymes with "turn" — kept short by design; grow only on observed errors [findings/12 §2.5]. Digit-by-digit read-back with the confirmation loop uses the guide's canonical pattern [findings/12 §2.4]. The Duo-code refusal mirrors CSUB's published "NEVER share your Duo code" warning [findings/13 §18].
+**R9.** **Pronunciations, digits, Duo.** The Reference Pronunciations list contains exactly three entries — "CSUB" as C-S-U-B, "Rio" as "REE-oh" (like the city, never spelled out), "Kern" rhymes with "turn" — kept short by design; grow only on observed errors [findings/12 §2.5]. Digit-by-digit read-back with the confirmation loop uses the guide's canonical pattern [findings/12 §2.4]. The Duo-code refusal mirrors CSUB's published "NEVER share your Duo code" warning [findings/13 §18].
 
 **R10.** **Crisis language handling.** On distress/self-harm/safety cues: one warm sentence, then `escalate_to_human` immediately — no confirmation, no `ask_campus_knowledge`, no preamble question [findings/17 §4.5; findings/16 §C13]. RIO never improvises, alters, or abbreviates crisis phone numbers: the numbers come from the tool's canned return (Demo Spec 02), with the instructions carrying the same four real resources — Counseling Center (661) 654-3366 (press 2 after hours), 988, 911 / UPD (661) 654-2111 [findings/13 §20-22] — ONLY as the tool-failure backup, explicitly framed as the sole facts speakable without a tool (the one carve-out from R4's never-from-memory rule). The path is LLM-free and simulated-only: no transfer occurs, no TwiML changes (binding design decision; findings/16 §C13).
 
@@ -147,7 +149,7 @@ dead-end these callers and never treat the moment as routine.
 **R11.** Replace the value of `const GREETING_INSTRUCTIONS` (`src/gateway.ts:248`; consumed by the greeting `response-create` at `src/gateway.ts:605`) with exactly:
 
 ```
-Say exactly this greeting, then stop and listen: "Thanks for calling Cal State Bakersfield! This is RIO, the Roadrunner Intelligent Operator. I'm an AI assistant on a demo line - everything I look up is simulated. I can help in English o en espanol - how can I help you today?"
+Say exactly this greeting, then stop and listen: "Thanks for calling Cal State Bakersfield! This is Rio, the Roadrunner Intelligent Operator. I'm an AI assistant on a demo line - everything I look up is simulated. I can help in English o en espanol - how can I help you today?"
 ```
 
 (Use the real accented word `español` in the source string — the ASCII form above is only this document avoiding encoding ambiguity; the repo's files are UTF-8.) Rationale: the model follows sample phrases near-verbatim [findings/12 §2.6], so an exact quoted greeting makes the highest-leverage 10 seconds deterministic; up-front AI self-identification is non-negotiable (California disclosure; Duplex lesson) and the simulated-data disclosure migrates into the persona because no presenter can label it in a self-serve demo [RIO-DEMO-CONCEPT.md:117-119; findings/16 §C14]. The const stays module-private (not exported) and stays a per-response instruction override — the greeting mechanism (`WAIT_FOR_SESSION_UPDATED` deferral, first-frames ordering, `src/gateway.ts:590-613`) is untouched. The existing test only asserts the greeting `response-create` carries a non-empty `options.instructions` string (`test/gateway.session-config.test.ts:113-116`) — that assertion passes unchanged.
@@ -178,7 +180,7 @@ Say exactly this greeting, then stop and listen: "Thanks for calling Cal State B
 - **A2** (suite green): the full `npx vitest run` suite passes — 356 pre-existing tests plus this spec's additions; zero failures, zero skips introduced.
 - **A3** (new content assertions — add to `test/gateway.session-config.test.ts`): `INSTRUCTIONS` contains each of these exact substrings: `NEVER answer campus facts from memory`, `ask_campus_knowledge`, `route_call`, `escalate_to_human`, `verify_identity`, `reset_password`, `send_sms`, `get_current_time`, `C-S-U-B`, `REE-oh`, `not_found`, `(661) 654-3366`, `988`, `(661) 654-2111`, `Never switch languages based on accent alone`.
 - **A4** (tool-mention parity, R5): a new unit test asserts `INSTRUCTIONS` does **not** contain the substring `hello` as a tool mention and does not contain `lookup_campus_info` (the superseded tool name); and that every `\b[a-z]+(_[a-z]+)+\b` snake_case token in `INSTRUCTIONS` is a member of the allow-set {the seven tool names} ∪ {`not_found`} (`not_found` is the R7 envelope status, not a tool; the test guards against a drive-by tool rename desynchronizing prompt and registrations).
-- **A5** (greeting): a new unit test on the mock-gateway leg (same harness as `test/gateway.session-config.test.ts:74-122`) asserts the greeting `response-create` frame's `options.instructions` contains `I'm an AI assistant` and `everything I look up is simulated` and `RIO, the Roadrunner Intelligent Operator`.
+- **A5** (greeting): a new unit test on the mock-gateway leg (same harness as `test/gateway.session-config.test.ts:74-122`) asserts the greeting `response-create` frame's `options.instructions` contains `I'm an AI assistant` and `everything I look up is simulated` and `Rio, the Roadrunner Intelligent Operator`.
 - **A6** (size guard, R13): a new unit test asserts `INSTRUCTIONS.length < 6000`.
 - **A7** (scope purity): `git diff --stat` for this spec's commit touches only `src/gateway.ts` and `test/gateway.session-config.test.ts`. `src/config.ts`, `src/mcp-server.ts`, `src/tools.ts`, `src/session.ts` are untouched; `config.voice` default remains `'marin'` (asserted already at `test/gateway.session-config.test.ts:103`).
 - **A8** (live-call behavioral checks — human-run, after Demo Spec 02/03 land; record results in plans/LEDGER.md): (a) greeting is spoken essentially verbatim incl. AI self-ID and "simulated"; (b) "when does fall financial aid disburse?" → spoken preamble → one `ask_campus_knowledge` call in the `tool-call` log line → answer matches corpus, not model memory; (c) a substantive Spanish utterance flips the call to Spanish and it stays there; (d) mild scripted distress cue ("honestly I've been really overwhelmed lately") → warm sentence → `escalate_to_human` call with no confirmation question, numbers spoken match the tool return digit-for-digit [findings/12 §4.4 — never enact realistic distress when testing]; (e) an off-corpus question ("what's the cafeteria's soup today?") → "I don't have that detail" + offer to route, no invented answer.
@@ -192,3 +194,7 @@ Say exactly this greeting, then stop and listen: "Thanks for calling Cal State B
 - **The announcement email** — the rewritten "what time is it" showcase item and all honesty-layer email copy: the email's own spec/doc (`docs/demo/RIO-ANNOUNCEMENT-EMAIL.md`).
 - **S8 voice verification and performance tuning experiments** — pending human-run milestones; the tuning pass with gates/revert rule is its own spec.
 - **Accent control within Spanish** — known model limitation, accepted as harmless-to-favorable for the Kern County audience [findings/12 §1.4]; no mitigation attempted.
+
+---
+
+Amended 2026-07-19: voice-formatting — speakable text uses 'Rio' (TTS spelled out all-caps RIO); human decision.

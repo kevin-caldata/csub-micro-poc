@@ -20,7 +20,7 @@ const R4_HEADINGS = [
   '## Counseling and crisis resources',
   '## Campus events, late summer 2026',
   '## NextTech Kern conference',
-  '## About RIO and CSUB basics',
+  '## About Rio and CSUB basics',
 ];
 
 // master plan §4 — KNOWLEDGE_TOPICS enum, identical to the corpus <!-- topic: ... --> vocabulary.

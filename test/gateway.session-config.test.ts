@@ -496,7 +496,7 @@ describe('RIO persona — instruction and greeting content (Demo Spec 01 A3–A6
       expect(typeof instructions).toBe('string');
       expect(instructions).toContain("I'm an AI assistant");
       expect(instructions).toContain('everything I look up is simulated');
-      expect(instructions).toContain('RIO, the Roadrunner Intelligent Operator');
+      expect(instructions).toContain('Rio, the Roadrunner Intelligent Operator');
     } finally {
       leg.close();
       await waitUntil(() => closed, 1000).catch(() => {});
