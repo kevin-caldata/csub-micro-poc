@@ -98,7 +98,7 @@ export type TwilioInboundMessage =
  * as of T03.5 (Spec 03 R8).
  */
 export interface TwilioMediaDeps {
-  config: Pick<AppConfig, 'publicHost' | 'twilioAuthToken' | 'twilioValidateUpgrade'>;
+  config: Pick<AppConfig, 'publicHost' | 'twilioAuthToken' | 'twilioValidateUpgrade' | 'twilioPingSeconds'>;
   claimPendingCall: (candidate: string) => PendingCall | undefined;
   /**
    * T05.4 widening (Spec 03 R4 step 4 already holds the claimed `PendingCall` at this call
@@ -164,6 +164,10 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
     // Never set again — no per-frame logging (Railway 500 lines/s cap) [Spec 03 R3 last para,
     // findings/09 rules].
     let loggedMediaCadence = false;
+    // findings/18 addendum (claim 21): started once the session exists (in the `start` case
+    // below); cleared here, in the single `close` listener, which fires on every close path
+    // (graceful or abnormal) — the same choke point `stream-stop`'s summary line already uses.
+    let heartbeat: TwilioHeartbeatHandle | undefined;
     let startTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
       socket.close(1008, 'no start'); // policy violation — no `start` arrived in time
     }, deps.startTimeoutMs ?? START_TIMEOUT_MS);
@@ -189,6 +193,7 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
         clearTimeout(startTimer);
         startTimer = undefined;
       }
+      heartbeat?.stop(); // findings/18 addendum claim 22: emits the one twilio-heartbeat summary line
       const reason = reasonBuf.toString(); // reason is a Buffer [findings/08 gotcha 9]
       // 1000/1005 after a `stop` event = normal hangup; 1006 with no `stop` = network drop/abort.
       const abnormal = code === 1006 && !sawStop;
@@ -282,6 +287,10 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
               log: sessionLog,
             });
             sessions.set(startStreamSid, session);
+            // findings/18 addendum (claim 21): per-session Twilio-leg heartbeat, started the
+            // instant the session exists (mirrors gateway.ts's gateway-leg keepalive starting on
+            // 'open'); no-ops entirely when deps.config.twilioPingSeconds is 0.
+            heartbeat = startTwilioHeartbeat(session, deps.config.twilioPingSeconds);
             logEvent({
               level: 'info',
               message: 'stream-start',
@@ -446,6 +455,107 @@ export function hangup(session: Session, code = 1000, reason = 'bye'): void {
   if (socket.readyState !== WebSocket.OPEN) return;
 
   socket.close(code, reason);
+}
+
+// --- findings/18 addendum (claims 21-23): Twilio-leg WS ping/pong heartbeat ---------------------
+//
+// Pure transport-layer instrumentation, deliberately modeled on gateway.ts's gateway-leg keepalive
+// ping (gateway.ts:414-419, GATEWAY_PING_SECONDS) — a few lines, no message-schema change, and
+// zero risk to call behavior: `ping()`/`pong()` are WS-protocol control frames, invisible to
+// Twilio's application-level Media Streams parser, and `ws`-based peers auto-pong per RFC 6455
+// 5.5.3 (a pong's payload must echo the ping's verbatim). This directly tests H2' (per-connection
+// Railway/Twilio edge transport flakiness, findings/18 addendum): a 31924 preceded by a missed
+// pong or an elevated RTT is near-direct confirmation; clean pongs right up to the error refutes
+// it (claim 22). Deliberately INSTRUMENTATION ONLY — never acts on a missed pong (no teardown, no
+// reconnect; that is separate zombie-teardown work, out of scope here).
+//
+// Log budget is anomalies-only (Railway line-rate cap, findings/09 rules): a `twilio-pong-missed`
+// warn once a ping goes unanswered past 2 intervals, a `twilio-pong-slow` warn on any RTT over
+// 1000 ms, and exactly ONE `twilio-heartbeat` info summary line — emitted from `stop()`, i.e. at
+// session teardown — carrying pings/pongs/maxRttMs/lastPongAgoMs, the line meant to correlate
+// against any live 31924. Never a per-pong info log.
+
+/** Handle returned by `startTwilioHeartbeat`; `stop()` is idempotent. */
+export interface TwilioHeartbeatHandle {
+  stop(): void;
+}
+
+const NOOP_HEARTBEAT: TwilioHeartbeatHandle = { stop(): void {} };
+
+/**
+ * Starts a per-session ping/pong heartbeat on the Twilio leg's own socket (findings/18 addendum
+ * claim 21), or — if `pingSeconds <= 0` (TWILIO_PING_SECONDS=0) — deliberately does nothing at
+ * all: no timer, no `pong` listener, no logging, ever. `pingSeconds` is normally
+ * `config.twilioPingSeconds`; passed explicitly (not the whole `AppConfig`) so this stays a pure
+ * function of its own inputs, callable from a unit test without an `AppConfig` fixture.
+ */
+export function startTwilioHeartbeat(session: Session, pingSeconds: number): TwilioHeartbeatHandle {
+  if (pingSeconds <= 0) return NOOP_HEARTBEAT;
+
+  const socket = session.twilioWs;
+  const intervalMs = pingSeconds * 1000;
+  let pingsSent = 0;
+  let pongsReceived = 0;
+  let maxRttMs = 0;
+  let lastPongAt = Date.now(); // baseline for the first missed-pong check, before any real pong
+  let missedWarned = false; // one warn per missed episode — cleared the moment a pong lands
+  let stopped = false;
+
+  function onPong(data: Buffer): void {
+    pongsReceived += 1;
+    const receivedAt = Date.now();
+    lastPongAt = receivedAt;
+    missedWarned = false;
+    const sentAt = Number(data.toString());
+    const rttMs = Number.isFinite(sentAt) ? Math.max(0, receivedAt - sentAt) : 0;
+    if (rttMs > maxRttMs) maxRttMs = rttMs;
+    if (rttMs > 1000) {
+      session.log('warn', 'twilio-pong-slow', {
+        event: 'twilio-pong-slow',
+        callSid: session.callSid,
+        streamSid: session.streamSid,
+        rttMs,
+      });
+    }
+  }
+  socket.on('pong', onPong);
+
+  const timer = setInterval(() => {
+    if (socket.readyState !== WebSocket.OPEN) return; // no-op without throwing (same guard as sendMedia)
+    const sinceLastPongMs = Date.now() - lastPongAt;
+    if (sinceLastPongMs > 2 * intervalMs && !missedWarned) {
+      missedWarned = true;
+      session.log('warn', 'twilio-pong-missed', {
+        event: 'twilio-pong-missed',
+        callSid: session.callSid,
+        streamSid: session.streamSid,
+        sinceLastPongMs,
+      });
+    }
+    pingsSent += 1;
+    socket.ping(Buffer.from(String(Date.now())));
+  }, intervalMs);
+
+  return {
+    stop(): void {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      socket.off('pong', onPong);
+      // The ONE correlator line (findings/18 addendum claim 22): if this call's next event is a
+      // Twilio 31924, whatever pingsSent/pongsReceived/maxRttMs/lastPongAgoMs say here is the
+      // per-connection liveness evidence.
+      session.log('info', 'twilio-heartbeat', {
+        event: 'twilio-heartbeat',
+        callSid: session.callSid,
+        streamSid: session.streamSid,
+        pingsSent,
+        pongsReceived,
+        maxRttMs,
+        lastPongAgoMs: Date.now() - lastPongAt,
+      });
+    },
+  };
 }
 
 /**

@@ -44,6 +44,35 @@ describe('loadConfig — Spec 04 R2 gateway keys', () => {
   });
 });
 
+// findings/18 addendum (claim 21): TWILIO_PING_SECONDS is the discriminating-experiment config
+// key — unlike GATEWAY_PING_SECONDS (default 0/off), this one defaults to ON (5s) because it IS
+// the live-traffic instrumentation the addendum calls for; 0 still means fully disabled.
+describe('loadConfig — TWILIO_PING_SECONDS (findings/18 addendum claim 21)', () => {
+  it('defaults to 5 (enabled) when unset', () => {
+    const c = loadConfig({ ...BASE });
+    expect(c.twilioPingSeconds).toBe(5);
+  });
+
+  it('coerces a numeric string', () => {
+    const c = loadConfig({ ...BASE, TWILIO_PING_SECONDS: '10' });
+    expect(c.twilioPingSeconds).toBe(10);
+    expect(typeof c.twilioPingSeconds).toBe('number');
+  });
+
+  it('accepts 0 (fully disabled)', () => {
+    const c = loadConfig({ ...BASE, TWILIO_PING_SECONDS: '0' });
+    expect(c.twilioPingSeconds).toBe(0);
+  });
+
+  it('rejects a negative value', () => {
+    expect(() => loadConfig({ ...BASE, TWILIO_PING_SECONDS: '-1' })).toThrow(/Invalid environment configuration/);
+  });
+
+  it('rejects a non-integer value', () => {
+    expect(() => loadConfig({ ...BASE, TWILIO_PING_SECONDS: '1.5' })).toThrow(/Invalid environment configuration/);
+  });
+});
+
 // Findings review (Minor — GATEWAY_WS_URL prod guard): GATEWAY_WS_URL (Spec 10 R10) is a
 // test-harness-only seam that opens a bare, unauthenticated WS at whatever URL it names, skipping
 // mintRealtimeToken entirely — it must never reach a real deployment. RAILWAY_PUBLIC_DOMAIN is

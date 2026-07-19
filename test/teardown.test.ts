@@ -34,6 +34,7 @@ const fixtureConfig: AppConfig = {
   tokenTtlSeconds: 600,
   gatewayHandshakeTimeoutMs: 5000,
   gatewayPingSeconds: 0,
+  twilioPingSeconds: 0,
   waitForSessionUpdated: false,
   gatewayTags: undefined,
   twilioValidateUpgrade: false,
