@@ -285,6 +285,57 @@ describe('dispatch — outbound flow (send then mark; first-delta logging only)'
   });
 });
 
+// findings/18 (Twilio 31924 investigation) — log-only per-response outbound-burst evidence.
+// Uses the same `makeSession()` fake-gateway/fake-transcoder harness as the outbound-flow test
+// above; wires a real TurnRecorder so the 'outbound-burst' line's adjacency to the 'turn' line
+// (both keyed by responseId) is exercised end to end, not just in isolation.
+describe('dispatch — outbound-burst metrics (findings/18, log-only)', () => {
+  it('emits exactly one outbound-burst line per response, with plausible fields, on response-done', () => {
+    const { s, logs } = makeSession();
+    s.recorder = new TurnRecorder({ callSid: s.callSid, streamSid: s.streamSid }, (fields) => {
+      const { level, message, ...rest } = fields;
+      logs.push({ level, message, fields: rest });
+    });
+
+    dispatch(s, { type: 'response-created', responseId: 'r1', raw: {} });
+    s.latestMediaTimestamp = 100;
+    dispatch(s, { type: 'audio-delta', responseId: 'r1', itemId: 'item1', delta: 'aGVsbG8=', raw: {} }); // 'hello' base64
+    dispatch(s, { type: 'audio-delta', responseId: 'r1', itemId: 'item1', delta: 'aGVsbG8gd29ybGQ=', raw: {} }); // 'hello world'
+
+    // No line yet — only emitted at response-done.
+    expect(logs.filter((l) => l.fields?.event === 'outbound-burst').length).toBe(0);
+
+    dispatch(s, { type: 'response-done', responseId: 'r1', status: 'completed', raw: {} });
+
+    const burstLines = logs.filter((l) => l.fields?.event === 'outbound-burst');
+    expect(burstLines.length).toBe(1); // exactly one per response, none per delta
+    const fields = burstLines[0]!.fields!;
+    expect(fields.responseId).toBe('r1');
+    expect(fields.deltaCount).toBe(2);
+    expect(fields.totalBytes).toBeGreaterThan(0);
+    expect(fields.maxDeltaBytes).toBeGreaterThan(0);
+    expect(fields.maxDeltaBytes as number).toBeLessThanOrEqual(fields.totalBytes as number);
+    expect(typeof fields.burstMs).toBe('number');
+    expect(fields.burstMs as number).toBeGreaterThanOrEqual(0);
+    expect(burstLines[0]!.level).toBe('info');
+
+    // A response with no audio (straight to a function call) — no line at all, per response.
+    dispatch(s, { type: 'response-created', responseId: 'r2', raw: {} });
+    dispatch(s, { type: 'response-done', responseId: 'r2', status: 'completed', raw: {} });
+    expect(logs.filter((l) => l.fields?.event === 'outbound-burst').length).toBe(1); // still just the one from r1
+
+    // The accumulator resets cleanly for a fresh response with its own audio.
+    dispatch(s, { type: 'response-created', responseId: 'r3', raw: {} });
+    dispatch(s, { type: 'audio-delta', responseId: 'r3', itemId: 'item3', delta: 'aGk=', raw: {} }); // 'hi'
+    dispatch(s, { type: 'response-done', responseId: 'r3', status: 'completed', raw: {} });
+
+    const allBurstLines = logs.filter((l) => l.fields?.event === 'outbound-burst');
+    expect(allBurstLines.length).toBe(2);
+    expect(allBurstLines[1]!.fields!.responseId).toBe('r3');
+    expect(allBurstLines[1]!.fields!.deltaCount).toBe(1);
+  });
+});
+
 describe('dispatch — backpressure (Spec 03 R6, exercised through sendMedia)', () => {
   it('bufferedAmount over the guard closes the socket 1011 and sends nothing', () => {
     const { s, socket } = makeSession();

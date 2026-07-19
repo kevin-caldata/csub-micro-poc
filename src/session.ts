@@ -54,6 +54,31 @@ import { loadConfig, type AppConfig } from './config.js';
 import { safeRaw } from './logger.js';
 
 /**
+ * findings/18 (Twilio 31924 investigation) — accumulates log-only outbound-burst evidence for
+ * the response CURRENTLY streaming (`s.outboundBurst`, sessions.ts). Called once per `audio-delta`
+ * with the ACTUAL bytes handed to `sendMedia` (post-transcode payload — the real bytes hitting the
+ * Twilio socket, not the raw gateway delta), immediately after that send. Starts a fresh
+ * accumulator whenever the responseId changes (covers both "first delta of a new response" and
+ * the defensive case of a stale/never-cleared entry from an earlier response). Read once and
+ * nulled by `dispatch`'s `response-done` case below — this function ONLY accumulates, it never
+ * logs and never influences `sendMedia`/pacing/chunking in any way (findings/18 "How to verify
+ * live" step 1 — instrument first, change nothing).
+ */
+function recordOutboundBurst(s: Session, responseId: string, payload: string): void {
+  const deltaBytes = Buffer.from(payload, 'base64').length; // decoded mu-law byte count — same
+  // convention as twilio-media.ts's own media-cadence log (decode before counting).
+  const sendPerf = performance.now();
+  if (s.outboundBurst == null || s.outboundBurst.responseId !== responseId) {
+    s.outboundBurst = { responseId, deltaCount: 0, totalBytes: 0, maxDeltaBytes: 0, firstSendPerf: sendPerf, lastSendPerf: sendPerf };
+  }
+  const burst = s.outboundBurst;
+  burst.deltaCount += 1;
+  burst.totalBytes += deltaBytes;
+  burst.maxDeltaBytes = Math.max(burst.maxDeltaBytes, deltaBytes);
+  burst.lastSendPerf = sendPerf;
+}
+
+/**
  * Single `switch (ev.type)` over the complete 23-member normalized server-event union (Spec 05
  * R2 behavior table, Spec 04 R9 — exact normalized names, exhaustive). Implements the four-point
  * `responseStartTimestamp` epoch (R4: points 1 and 2 live here, point 3 lives in bargein.ts's
@@ -140,6 +165,10 @@ export function dispatch(s: Session, ev: ServerEvent): void {
       const payload = s.transcoder ? s.transcoder.gatewayToTwilio(ev.delta) : ev.delta;
       sendMedia(s, payload); // Spec 03 R6 backpressure guard lives inside sendMedia itself.
 
+      // findings/18 (Twilio 31924 investigation) — log-only burst-shape accumulation over the
+      // exact bytes just sent; read+cleared at this response's response-done below.
+      recordOutboundBurst(s, ev.responseId, payload);
+
       // Then the mark (R6): mint the unique r<responseId>:<seq> name and push it — pushMark
       // (bargein.ts) is the SOLE writer of `firstMarkNameOfResponse` (T05.2 review fix).
       pushMark(s, nextMarkName(s, ev.responseId));
@@ -185,6 +214,27 @@ export function dispatch(s: Session, ev: ServerEvent): void {
       // advisory phase enum last.
       s.responseActive = false;
       s.recorder?.onResponseDone(ev.responseId, ev.status);
+
+      // findings/18 (Twilio 31924 investigation) — the one-line-per-response 'outbound-burst'
+      // evidence line, deliberately kept adjacent to the 'turn' line just emitted above (both
+      // share `ev.responseId`, so a burst can be correlated to its turn without a second lookup).
+      // Only fires when THIS response actually streamed audio (a pure tool-call response has
+      // none to report — no line, matching "none per delta", not "exactly one per response-done
+      // regardless"). Log-only: reading/clearing `s.outboundBurst` here has no effect on
+      // sendMedia/pacing/chunking, which never reads this field at all.
+      if (s.outboundBurst && s.outboundBurst.responseId === ev.responseId) {
+        const { deltaCount, totalBytes, maxDeltaBytes, firstSendPerf, lastSendPerf } = s.outboundBurst;
+        s.log('info', 'outbound-burst', {
+          event: 'outbound-burst',
+          responseId: ev.responseId,
+          deltaCount,
+          totalBytes,
+          maxDeltaBytes,
+          burstMs: Math.round(lastSendPerf - firstSendPerf),
+        });
+        s.outboundBurst = null;
+      }
+
       // R8 tool-flow gate: ToolLoop's own onResponseDone re-checks the double gate (Spec 07
       // R12) — nothing more for the session to do; it never sends response-create itself.
       s.toolLoop?.onResponseDone({ responseId: ev.responseId, status: ev.status });
