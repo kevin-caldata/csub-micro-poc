@@ -86,3 +86,38 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...BASE, TWILIO_VALIDATE_UPGRADE: 'yes' })).toThrow();
   });
 });
+
+describe('loadConfig — Demo Spec 03 MCP knowledge keys', () => {
+  it('applies the three MCP defaults when unset', () => {
+    const c = loadConfig({ ...BASE });
+    expect(c.mcpModelId).toBe('google/gemini-3.1-flash-lite');
+    expect(c.mcpModelMaxTokens).toBe(150);
+    expect(c.mcpToolTimeoutMs).toBe(3500);
+  });
+
+  it('coerces MCP numeric strings and accepts the 4999 boundary', () => {
+    const c = loadConfig({ ...BASE, MCP_MODEL_MAX_TOKENS: '200', MCP_TOOL_TIMEOUT_MS: '4999' });
+    expect(c.mcpModelMaxTokens).toBe(200);
+    expect(typeof c.mcpModelMaxTokens).toBe('number');
+    expect(c.mcpToolTimeoutMs).toBe(4999);
+    expect(typeof c.mcpToolTimeoutMs).toBe('number');
+  });
+
+  it('rejects MCP_TOOL_TIMEOUT_MS at the transport cap with the cap message', () => {
+    expect(() => loadConfig({ ...BASE, MCP_TOOL_TIMEOUT_MS: '5000' })).toThrow(/runTool transport cap/);
+  });
+
+  it('rejects non-positive and non-integer MCP_TOOL_TIMEOUT_MS', () => {
+    for (const bad of ['0', '-1', '1.5']) {
+      expect(() => loadConfig({ ...BASE, MCP_TOOL_TIMEOUT_MS: bad })).toThrow(/Invalid environment configuration/);
+    }
+  });
+
+  it('rejects MCP_MODEL_MAX_TOKENS=0', () => {
+    expect(() => loadConfig({ ...BASE, MCP_MODEL_MAX_TOKENS: '0' })).toThrow(/Invalid environment configuration/);
+  });
+
+  it('rejects an empty MCP_MODEL_ID', () => {
+    expect(() => loadConfig({ ...BASE, MCP_MODEL_ID: '' })).toThrow(/Invalid environment configuration/);
+  });
+});
