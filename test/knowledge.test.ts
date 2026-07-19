@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import type { LogFields } from '../src/logger.js';
 import {
@@ -7,8 +7,22 @@ import {
   NOT_FOUND_SENTINEL,
   NOT_FOUND_SPOKEN,
   KNOWLEDGE_ERROR_SPOKEN,
+  KNOWLEDGE_ENVELOPE_SCHEMA,
   type KnowledgeGenerateFn,
 } from '../src/knowledge.js';
+
+// Hoisted — harmless to the Part 1 tests above, which use injected fakes and never reach
+// generateObject. Spies record their call options for the makeGatewayGenerate assertions below;
+// both mocks resolve/return locally, so no test ever opens a socket to the gateway (G10).
+const generateObjectMock = vi.fn(async () => ({ object: { status: 'ok', response_text: 'x' }, usage: {} }));
+vi.mock('ai', () => ({
+  generateObject: (...args: unknown[]) => generateObjectMock(...(args as [unknown])),
+}));
+
+const createGatewayMock = vi.fn((_opts: unknown) => (id: string) => ({ mockModelId: id }));
+vi.mock('@ai-sdk/gateway', () => ({
+  createGateway: (...args: unknown[]) => createGatewayMock(...(args as [unknown])),
+}));
 
 const BASE = {
   AI_GATEWAY_API_KEY: 'vck_test',
@@ -242,5 +256,40 @@ describe('askCampusKnowledge — unit (injected fakes, no network)', () => {
       expect(knowledgeLines[0]!.status).toBe('error');
       expect(knowledgeLines[0]!.errName).toBe('Error');
     }
+  });
+});
+
+describe('makeGatewayGenerate (mocked ai / @ai-sdk/gateway — no network, A10)', () => {
+  it('A10 options — calls the mocked generateObject with the exact wrapper options', async () => {
+    generateObjectMock.mockClear();
+    createGatewayMock.mockClear();
+    const { makeGatewayGenerate } = await import('../src/knowledge.js');
+
+    const abortSignal = new AbortController().signal;
+    const result = await makeGatewayGenerate(cfg)({
+      system: 's',
+      prompt: 'p',
+      maxOutputTokens: cfg.mcpModelMaxTokens,
+      abortSignal,
+    });
+
+    expect(result.object).toEqual({ status: 'ok', response_text: 'x' });
+    expect(generateObjectMock).toHaveBeenCalledTimes(1);
+    const call = generateObjectMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.schema).toBe(KNOWLEDGE_ENVELOPE_SCHEMA);
+    expect(call.maxRetries).toBe(0);
+    expect(call.maxOutputTokens).toBe(cfg.mcpModelMaxTokens);
+    expect(call.providerOptions).toEqual({ google: { thinkingConfig: { thinkingLevel: 'minimal' } } });
+    expect(call.system).toBe('s');
+    expect(call.prompt).toBe('p');
+    expect(call.abortSignal).toBe(abortSignal);
+    expect(call.model).toEqual({ mockModelId: cfg.mcpModelId });
+  });
+
+  it('createGateway was called with the explicit apiKey — no ambient-env reliance (R11)', async () => {
+    createGatewayMock.mockClear();
+    const { makeGatewayGenerate } = await import('../src/knowledge.js');
+    makeGatewayGenerate(cfg);
+    expect(createGatewayMock).toHaveBeenCalledWith({ apiKey: cfg.aiGatewayApiKey });
   });
 });

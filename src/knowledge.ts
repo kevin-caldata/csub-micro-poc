@@ -1,6 +1,8 @@
 // src/knowledge.ts — ask_campus_knowledge delegated-intelligence handler (Demo Spec 03).
 // The ONLY module in the repo importing from 'ai' (master plan §4 / Spec 03 Interfaces).
 import { z } from 'zod';
+import { generateObject } from 'ai';
+import { createGateway } from '@ai-sdk/gateway';
 import type { AppConfig } from './config.js';
 import { now, ms } from './logger.js';
 import type { LogFields } from './logger.js';
@@ -145,5 +147,22 @@ export async function askCampusKnowledge(
   }
 }
 
-// makeGatewayGenerate is implemented in Part 2 (below this line is intentionally the end of
-// Part 1 — see test/knowledge.test.ts's makeGatewayGenerate describe block).
+/** Default generate implementation — the ONLY place in the repo that imports from 'ai' (Spec 03 R11). */
+export function makeGatewayGenerate(cfg: AppConfig): KnowledgeGenerateFn {
+  const gw = createGateway({ apiKey: cfg.aiGatewayApiKey }); // explicit key — no ambient-env reliance
+  return async ({ system, prompt, maxOutputTokens, abortSignal }) => {
+    const { object, usage } = await generateObject({
+      model: gw(cfg.mcpModelId),
+      schema: KNOWLEDGE_ENVELOPE_SCHEMA,
+      system,
+      prompt,
+      maxOutputTokens,
+      maxRetries: 0, // a retry burns more time than a spoken miss [findings/15 claim 19]
+      abortSignal,
+      providerOptions: {
+        google: { thinkingConfig: { thinkingLevel: 'minimal' } },
+      },
+    });
+    return { object, usage };
+  };
+}
