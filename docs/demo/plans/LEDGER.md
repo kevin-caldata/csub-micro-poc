@@ -9,11 +9,10 @@ Companion protocol: `docs/demo/plans/README.md`. Wave structure: master demo pla
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: DA — DA1, DA2.1, DA3 dispatched 2026-07-19 (3 parallel lanes, isolated worktrees)
+- Wave: DB — M-A gate PASSED 2026-07-19 (Wave DA complete: DA1, DA2.1–.3, DA3 all OK); DB1.1 already OK (early); DB1.2 + DB2 dispatched
 - Last updated: 2026-07-19
-- Next dispatchable tasks: DA2.2 after DA2.1 merges; DB1.1 may fill an idle slot (early-dispatch allowance, README §2)
-- R2.3 cross-reference row appended to base `plans/LEDGER.md`: DONE 2026-07-19
-- Suite baseline: 356 tests (KF-1 flake rule — see Test rules below); typecheck clean
+- Next dispatchable tasks: none until DB1.2 + DB2 accept → then M-B deploy gate (grep gates, G3 byte-identity, G4 diff audit, push to main = Railway deploy) + H1 first live RIO call
+- Suite on main: 406 tests green, typecheck clean (baseline 356 + 50 demo tests)
 - Open blockers: none. Human needed later: H1 at M-B (first live call), H2 in Wave DC (measurement sessions), H3 in Wave DD (email inputs + send)
 
 ---
@@ -41,20 +40,20 @@ Never delete rows. Never re-order. Append-only in Deviations.
 | DA1 | 04-corpus/01-corpus-file-and-loader.md | — | OK | 212feae | review NEEDS_FIXES→fixed (fabricated §9 sentence removed + 6 en-dash ranges, ffc1382); post-merge CRLF break → .gitattributes LF pin (e31daef); corpus 33,450 B; 7/7 + allowlist zero violations |
 | DA2.1 | 02-static-tools/01-identity-flow-tools.md | — | OK | 5130f61 | review APPROVED; 368/368 + typecheck clean; Minor (final-review triage): reset_password description quoting style inconsistent with sibling |
 | DA2.2 | 02-static-tools/02-routing-and-escalation-tools.md | DA2.1 (dispatch with README N4 read-down) | OK | 317ad87 | review APPROVED; 387/387 in lane, 31/31 static-tools on main; G3/PD-03 spot check PASSED all 4 numbers byte-identical mcp-server vs corpus |
-| DA2.3 | 02-static-tools/03-sms-time-and-hello-removal.md | DA2.1, DA2.2 | D | | |
+| DA2.3 | 02-static-tools/03-sms-time-and-hello-removal.md | DA2.1, DA2.2 | OK | e565da6 | review APPROVED + doc-comment fix (738b2f8); tools.test.ts count-13 was plan arithmetic slip (verified vs merge-base); A9 grep gate clean |
 | DA3 | 05-performance/01-aggregator-knowledge-extension.md | — | OK | 915bb1d | review NEEDS_FIXES→fixed (EXPERIMENTS.md intro R3 72h sentence, 7592cde); D2 grep gate 0; smoke outputs byte-matched |
 
 **Merge point M-A** (all five rows OK + merged): full `npx vitest run` green (KF-1 rule below); record actual count in Current state; run the deferred G3 crisis-number spot check `src/mcp-server.ts` vs `assets/csub-corpus.md` if DA2.2's report flagged it (PD-03). File sets disjoint — no manual merge. DA2.* landed against the zero-arg `buildMcpServer()` (D3).
 
-M-A gate: Status ` - ` · Date ` ` · Note ` `
+M-A gate: Status `OK` · Date `2026-07-19` · Note `406/406 + typecheck clean on main, no KF-1 flake; G3/PD-03 spot check passed at DA2.2 accept`
 
 ## Wave DB — knowledge tool + persona (DB1 chain ∥ DB2; requires M-A except DB1.1)
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
 | DB1.1 | 03-knowledge/01-config-keys-and-dependency.md | — (early-dispatch allowed: file set disjoint from every DA task, README §2; needs npm registry access, PD-07) | OK | ce81116 | review APPROVED zero findings; ai@7.0.31 one-package add verified (npm ls); 362/362 in lane; 21/21 config tests on main post-merge |
-| DB1.2 | 03-knowledge/02-knowledge-tool-handler.md | DB1.1, M-A (DA1 `CSUB_CORPUS` + DA2.1–.3 mcp-server body) | - | | |
-| DB2 | 01-persona/01-instructions-and-greeting.md | M-A (DA2.1–.3 merged — tool names live) | - | | |
+| DB1.2 | 03-knowledge/02-knowledge-tool-handler.md | DB1.1, M-A (DA1 `CSUB_CORPUS` + DA2.1–.3 mcp-server body) | D | | |
+| DB2 | 01-persona/01-instructions-and-greeting.md | M-A (DA2.1–.3 merged — tool names live) | D | | |
 
 **Merge point M-B — the deploy gate** (all rows OK + merged): (1) full suite + `npm run typecheck` green; (2) grep gates Spec 03 A3 (no fallback in `src/`), Spec 04 A5 (corpus read only in `src/corpus.ts`), Spec 02 A9 (no live `'hello'`); (3) G3 crisis-number byte-identity across `src/gateway.ts`, `src/mcp-server.ts`, `assets/csub-corpus.md`; (4) R8.5 diff audit — G4 preamble assertions (`test/gateway.session-config.test.ts:100-102`, `:124-128`) and voice-default assertion (`:103`) unmodified; (5) push `main` → Railway auto-deploy → live. Then **H1 (human)**: watch deploy, first RIO call, Spec 01 A8 checks (a)–(e).
 
