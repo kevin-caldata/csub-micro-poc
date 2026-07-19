@@ -38,7 +38,7 @@ Never delete rows. Never re-order. Append-only in Deviations.
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
-| DA1 | 04-corpus/01-corpus-file-and-loader.md | — | D | | |
+| DA1 | 04-corpus/01-corpus-file-and-loader.md | — | OK | 212feae | review NEEDS_FIXES→fixed (fabricated §9 sentence removed + 6 en-dash ranges, ffc1382); post-merge CRLF break → .gitattributes LF pin (e31daef); corpus 33,450 B; 7/7 + allowlist zero violations |
 | DA2.1 | 02-static-tools/01-identity-flow-tools.md | — | OK | 5130f61 | review APPROVED; 368/368 + typecheck clean; Minor (final-review triage): reset_password description quoting style inconsistent with sibling |
 | DA2.2 | 02-static-tools/02-routing-and-escalation-tools.md | DA2.1 (dispatch with README N4 read-down) | D | | |
 | DA2.3 | 02-static-tools/03-sms-time-and-hello-removal.md | DA2.1, DA2.2 | - | | |
