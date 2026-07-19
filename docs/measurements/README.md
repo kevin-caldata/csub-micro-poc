@@ -29,6 +29,7 @@ test/measurement session:
    - `@event:greeting` → `greetings.jsonl`
    - `@event:session-updated` → `session-config.jsonl` (pcmu-vs-transcode evidence)
    - `@level:error OR @event:custom OR @event:gateway-close` → `anomalies.jsonl` (S11/S14 evidence)
+   - `@event:knowledge-call` → `knowledge.jsonl` (demo build — `ask_campus_knowledge` latency, Demo Spec 05 R3)
 
 2. Land the files in the repo at `docs/measurements/<YYYY-MM-DD>-<milestone-or-label>/`
    (e.g. `docs/measurements/2026-07-21-m2-bargein/`), one directory per test
@@ -57,7 +58,7 @@ The extraction procedure's step 3 uses `scripts/aggregate-latency.mjs`
 (T08.4), a zero-dependency Node ESM script with CLI shape:
 
 ```
-node scripts/aggregate-latency.mjs [--tools] [--metric <name>] <file.jsonl> [more.jsonl...]
+node scripts/aggregate-latency.mjs [--tools|--knowledge] [--metric <name>] <file.jsonl> [more.jsonl...]
 ```
 
 Commands to run against a landed measurement directory:
@@ -65,13 +66,16 @@ Commands to run against a landed measurement directory:
 ```
 node scripts/aggregate-latency.mjs docs/measurements/<dir>/turns.jsonl
 node scripts/aggregate-latency.mjs --tools docs/measurements/<dir>/tools.jsonl
+node scripts/aggregate-latency.mjs --knowledge docs/measurements/<dir>/knowledge.jsonl
 ```
 
 Optional flags: `--metric <name>` restricts output to a single metric
 (`ttfbMs`, `bridgeMs`, `turnMs`, `playbackConfirmMs` in default mode;
-`mcpMs`, `gateWaitMs`, `secondTtfbMs`, `toolTotalMs` in `--tools` mode). The
-script tolerates non-JSON lines (reports a skipped count) and pools raw
-per-turn/per-tool-call values across every file argument.
+`mcpMs`, `gateWaitMs`, `secondTtfbMs`, `toolTotalMs` in `--tools` mode;
+`knowledgeMs` in `--knowledge` mode). `--tools` and `--knowledge` are mutually
+exclusive — passing both prints usage and exits nonzero. The script tolerates
+non-JSON lines (reports a skipped count) and pools raw per-turn/per-tool-call/
+per-knowledge-call values across every file argument.
 
 **Hard rule (R12/R14, gotcha 13):** cross-call percentiles reported in any
 findings section come **only** from running this script over raw
