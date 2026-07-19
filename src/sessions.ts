@@ -117,6 +117,18 @@ export interface Session {
 export const sessions = stateSessions as unknown as Map<string, Session>;
 
 /**
+ * Read-only lookup by streamSid. Exists so callers outside this module (currently twiml.ts's
+ * `/stream-status` stream-error handler — a sanctioned, narrowly-scoped exception; see that
+ * file's comment) can find a live session without importing/mutating the `sessions` map
+ * directly. Returns `undefined` both when no such session ever existed and when it has already
+ * been torn down (teardownSession deletes synchronously), which is exactly the "already gone,
+ * do nothing" case that caller wants to treat identically.
+ */
+export function getSessionByStreamSid(streamSid: string): Session | undefined {
+  return sessions.get(streamSid);
+}
+
+/**
  * Initializes a fresh per-call Session. Does NOT insert into `sessions` — the `/twilio-media`
  * route's `start` handler does that (Spec 03 R4 step 4), after the token auth gate succeeds.
  */

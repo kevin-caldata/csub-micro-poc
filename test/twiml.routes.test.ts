@@ -1,9 +1,12 @@
 import { describe, it, beforeEach, expect } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
+import fastifyWebsocket from '@fastify/websocket';
 import twilio from 'twilio'; // default-import + destructure: safe under both ESM and CJS emit (twilio is CJS)
 const { getExpectedTwilioSignature } = twilio;
 import { registerTwimlRoutes, pendingCalls, PENDING_TTL_MS, type MintFn, type TwimlDeps } from '../src/twiml.js';
+import { registerTwilioMediaRoute, type TwilioMediaDeps } from '../src/twilio-media.js';
+import { sessions, type Session } from '../src/sessions.js';
 import type { AppConfig } from '../src/config.js';
 
 // A minimal app (not buildApp()) is used here — buildApp() auto-registers the real
@@ -68,7 +71,81 @@ function sign(params: Record<string, string>): string {
 
 beforeEach(() => {
   pendingCalls.clear();
+  sessions.clear();
 });
+
+/** Polls `pred` until true or `timeoutMs` elapses; throws on timeout (avoids fixed sleeps). */
+async function waitUntil(pred: () => boolean, timeoutMs = 2000, stepMs = 10): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!pred()) {
+    if (Date.now() > deadline) throw new Error('waitUntil: timed out');
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
+/** Map-backed, single-use stub for claimPendingCall (mirrors twilio-media.test.ts's helper). */
+function stubClaim(validTokens: Iterable<string>): TwilioMediaDeps['claimPendingCall'] {
+  const live = new Set(validTokens);
+  return (candidate: string) => {
+    if (!live.has(candidate)) return undefined;
+    live.delete(candidate); // single-use
+    return { callSid: 'CA-stub' };
+  };
+}
+
+const connectedFrame = JSON.stringify({ event: 'connected', protocol: 'Call', version: '1.0.0' });
+
+function startFrame(overrides: { streamSid?: string; callSid?: string; token?: string } = {}) {
+  return JSON.stringify({
+    event: 'start',
+    sequenceNumber: '1',
+    streamSid: overrides.streamSid ?? 'MZ1',
+    start: {
+      accountSid: 'AC1',
+      streamSid: overrides.streamSid ?? 'MZ1',
+      callSid: overrides.callSid ?? 'CA1',
+      tracks: ['inbound'],
+      mediaFormat: { encoding: 'audio/x-mulaw', sampleRate: 8000, channels: 1 },
+      customParameters: overrides.token === undefined ? { token: 'tok-1' } : { token: overrides.token },
+    },
+  });
+}
+
+/**
+ * Builds a single app with BOTH `/twilio-media` (real route, real 'close' handler wiring) and
+ * `/stream-status` (the fix under test) registered — needed to exercise the fix's actual
+ * contract: /stream-status must not implement its own teardown, it must trigger the EXISTING
+ * close-triggered `teardownSession` path that `registerTwilioMediaRoute` already wires up.
+ */
+async function buildCombinedApp(
+  twilioMediaDeps: Partial<TwilioMediaDeps> = {},
+): Promise<{ app: FastifyInstance; onSessionStartCalls: Session[] }> {
+  const app = Fastify({ logger: false });
+  await app.register(formbody);
+  await app.register(fastifyWebsocket, {
+    options: { perMessageDeflate: false, maxPayload: 1 * 1024 * 1024 },
+  });
+
+  const fakeMint: MintFn = async () => ({ token: 'vcst_fake', url: 'wss://gw.example/x' });
+  registerTwimlRoutes(app, fixtureConfig, { mint: fakeMint });
+
+  const onSessionStartCalls: Session[] = [];
+  registerTwilioMediaRoute(app, {
+    config: { publicHost: fixtureConfig.publicHost, twilioAuthToken: fixtureConfig.twilioAuthToken, twilioValidateUpgrade: false },
+    claimPendingCall: twilioMediaDeps.claimPendingCall ?? stubClaim([]),
+    onSessionStart: twilioMediaDeps.onSessionStart ?? ((s) => onSessionStartCalls.push(s)),
+    startTimeoutMs: twilioMediaDeps.startTimeoutMs,
+  });
+
+  await app.ready();
+  return { app, onSessionStartCalls };
+}
+
+/** Mirrors twilio-media.test.ts's helper: avoids the 30s graceful-close fallback over injectWS. */
+async function closeCombinedApp(app: FastifyInstance): Promise<void> {
+  for (const client of app.websocketServer.clients) client.terminate();
+  await app.close();
+}
 
 describe('registerTwimlRoutes — POST /twiml', () => {
   it('A2 happy path: 200 text/xml with the exact TwiML shape', async () => {
@@ -289,5 +366,154 @@ describe('registerTwimlRoutes — POST /stream-status', () => {
     expect(streamLines[0]!.streamError).toBe('x');
 
     await app.close();
+  });
+});
+
+// Zombie-socket fix: Twilio's stream-error callback (no WS close frame follows it) must now
+// proactively tear the session down instead of leaving it half-open for 30s-2min until TCP
+// death. These tests exercise the FULL path — /twilio-media's real 'close' handler wiring must
+// be the thing that actually reaps the session; /stream-status only triggers it.
+describe('registerTwimlRoutes — POST /stream-status stream-error proactive teardown', () => {
+  it('(i) live session: 204, warn log, socket terminated, and the EXISTING close/teardown path reaps it (gateway leg + session removed)', async () => {
+    const { app, onSessionStartCalls } = await buildCombinedApp({ claimPendingCall: stubClaim(['tok-err']) });
+    try {
+      const ws = await app.injectWS('/twilio-media');
+      ws.send(connectedFrame);
+      ws.send(startFrame({ streamSid: 'MZerr1', callSid: 'CAerr1', token: 'tok-err' }));
+      await waitUntil(() => sessions.has('MZerr1'));
+
+      const session = onSessionStartCalls[0];
+      expect(session).toBeTruthy();
+      // Stands in for "the gateway leg closes" — production wiring installs onTeardown to close
+      // the gateway leg and MCP client (Spec 05/07); this route never touches that wiring itself,
+      // it only needs to reach the ONE existing teardown funnel that calls it.
+      let onTeardownCalls = 0;
+      session!.onTeardown = () => {
+        onTeardownCalls += 1;
+      };
+
+      const capture = captureStdout();
+      let res;
+      try {
+        res = await app.inject({
+          method: 'POST',
+          url: '/stream-status',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          payload: new URLSearchParams({
+            StreamEvent: 'stream-error',
+            StreamError: 'Stream signal error, code: 31924',
+            StreamErrorCode: '31924',
+            CallSid: 'CAerr1',
+            StreamSid: 'MZerr1',
+          }).toString(),
+        });
+        // terminate() -> the socket's 'close' event -> teardownSession is asynchronous (an
+        // event-loop tick over injectWS's fake duplex); poll rather than assume synchronity.
+        await waitUntil(() => !sessions.has('MZerr1'));
+      } finally {
+        capture.restore();
+      }
+
+      expect(res!.statusCode).toBe(204);
+      expect(onTeardownCalls, 'the EXISTING teardown funnel must have run').toBe(1);
+      expect(sessions.has('MZerr1'), 'session must be reaped from the registry').toBe(false);
+
+      const teardownLines = capture.lines().filter((l) => l.event === 'stream-error-teardown');
+      expect(teardownLines.length).toBe(1);
+      expect(teardownLines[0]!.level).toBe('warn');
+      expect(teardownLines[0]!.callSid).toBe('CAerr1');
+      expect(teardownLines[0]!.streamSid).toBe('MZerr1');
+      expect(teardownLines[0]!.streamErrorCode).toBe('31924');
+
+      // The normal stream-stop summary line still fires — same path as any other disconnect.
+      const stopLines = capture.lines().filter((l) => l.event === 'stream-stop');
+      expect(stopLines.length).toBe(1);
+      expect(stopLines[0]!.streamSid).toBe('MZerr1');
+    } finally {
+      await closeCombinedApp(app);
+    }
+  });
+
+  it('(ii) no matching session (already gone): 204, no throw, no teardown attempted', async () => {
+    const { app } = await buildCombinedApp();
+    try {
+      const capture = captureStdout();
+      let res;
+      try {
+        res = await app.inject({
+          method: 'POST',
+          url: '/stream-status',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          payload: new URLSearchParams({
+            StreamEvent: 'stream-error',
+            StreamError: 'x',
+            StreamErrorCode: '31924',
+            CallSid: 'CA-gone',
+            StreamSid: 'MZ-gone',
+          }).toString(),
+        });
+      } finally {
+        capture.restore();
+      }
+
+      expect(res!.statusCode).toBe(204);
+      // The existing stream-status log line still fires (unchanged) ...
+      const statusLines = capture.lines().filter((l) => l.event === 'stream-status');
+      expect(statusLines.length).toBe(1);
+      expect(statusLines[0]!.level).toBe('error');
+      // ... but nothing beyond it: no teardown attempted, and no failure branch either.
+      expect(capture.lines().filter((l) => l.event === 'stream-error-teardown').length).toBe(0);
+      expect(capture.lines().filter((l) => l.event === 'stream-error-teardown-failed').length).toBe(0);
+      expect(sessions.size).toBe(0);
+    } finally {
+      await closeCombinedApp(app);
+    }
+  });
+
+  it('(iii) non-error stream-status events are unchanged: 204, info log, live session left alone', async () => {
+    const { app, onSessionStartCalls } = await buildCombinedApp({ claimPendingCall: stubClaim(['tok-ok']) });
+    try {
+      const ws = await app.injectWS('/twilio-media');
+      ws.send(connectedFrame);
+      ws.send(startFrame({ streamSid: 'MZok1', callSid: 'CAok1', token: 'tok-ok' }));
+      await waitUntil(() => sessions.has('MZok1'));
+      const session = onSessionStartCalls[0];
+      let onTeardownCalls = 0;
+      session!.onTeardown = () => {
+        onTeardownCalls += 1;
+      };
+
+      const capture = captureStdout();
+      let res;
+      try {
+        res = await app.inject({
+          method: 'POST',
+          url: '/stream-status',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          payload: new URLSearchParams({
+            StreamEvent: 'stream-started',
+            CallSid: 'CAok1',
+            StreamSid: 'MZok1',
+          }).toString(),
+        });
+      } finally {
+        capture.restore();
+      }
+
+      expect(res!.statusCode).toBe(204);
+      const statusLines = capture.lines().filter((l) => l.event === 'stream-status');
+      expect(statusLines.length).toBe(1);
+      expect(statusLines[0]!.level).toBe('info');
+      expect(statusLines[0]!.streamEvent).toBe('stream-started');
+
+      // The live session (same StreamSid) must be left completely alone — no teardown triggered.
+      expect(capture.lines().filter((l) => l.event === 'stream-error-teardown').length).toBe(0);
+      expect(onTeardownCalls).toBe(0);
+      expect(sessions.has('MZok1')).toBe(true);
+
+      ws.terminate();
+    } finally {
+      await closeCombinedApp(app);
+    }
   });
 });
