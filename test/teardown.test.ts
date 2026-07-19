@@ -126,6 +126,24 @@ function pendingCallRejecting(err: unknown): PendingCall {
   return { callSid: 'CA1', createdAt: Date.now(), gatewayAuth: Promise.reject(err) };
 }
 
+/** A manually-resolvable promise for race control (same idiom as test/tool-loop.test.ts). */
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Polls `pred` until true or `timeoutMs` elapses (same idiom as gateway.leg.test.ts et al.). */
+async function waitUntil(pred: () => boolean, timeoutMs = 2000, stepMs = 5): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs) throw new Error('waitUntil timed out');
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
 const fakeMint = { token: 'vcst_test', url: 'wss://ai-gateway.vercel.sh/v4/ai/realtime-model', expiresAt: 123, getTokenMs: 42 };
 
 /** Full bootstrap wiring, fakes injected — mirrors the production call site's deps shape. */
@@ -429,6 +447,90 @@ describe('startSessionBridge — A4 unit analog (isolation)', () => {
     expect(sessions.has('MZ-B')).toBe(true);
     expect(socketB.closeCalls.length).toBe(0);
     expect(mcpB.closeCalls.length).toBe(0);
+  });
+});
+
+// Findings review (Important — teardown/bootstrap race leaks a live gateway WS + MCP client):
+// `startSessionBridge` has several awaits (mint, MCP connect, fetchToolDefs) before it ever opens
+// the gateway leg. If the Twilio WS dies WHILE parked on one of those awaits, `teardownSession`
+// runs to completion right then — but at that instant `onTeardown`'s closure sees
+// `gateway`/`mcpClient`/`toolLoop` all still `undefined`, so it does nothing for them. Once the
+// awaited promise resolves, execution resumes and (absent this fix) goes on to actually create
+// those resources — a live gateway WS and a live MCP client that `onTeardown` already ran and,
+// being a one-shot latch (`teardownSession`'s `if (s.tornDown) return`), will never run again to
+// close them. These two tests park `startSessionBridge` on each await in turn, tear the session
+// down mid-flight via the exact same `teardownSession` call path Spec 02/03's real Twilio-close
+// handlers use, then let the parked promise resolve — and assert nothing was left open.
+describe('startSessionBridge — teardown mid-bootstrap race (Important finding)', () => {
+  it('teardown while parked on a slow mint: no gateway leg opens and no MCP client is ever created', async () => {
+    const { session, socket } = makeSession();
+    sessions.set(session.streamSid, session);
+
+    const mint = deferred<typeof fakeMint>();
+    const pendingCall: PendingCall = { callSid: 'CA1', createdAt: Date.now(), gatewayAuth: mint.promise };
+
+    const gw = fakeOpenGatewayLeg();
+    let mcpCreateCalls = 0;
+    const bridgePromise = startSessionBridge(session, pendingCall, {
+      config: fixtureConfig,
+      openGatewayLeg: gw.fn,
+      createMcpClient: async () => {
+        mcpCreateCalls += 1;
+        return fakeMcpClient().client;
+      },
+      fetchToolDefs: async () => [],
+    });
+
+    // startSessionBridge runs synchronously up to its first `await` before ever returning
+    // control here — so by this point it is guaranteed to be parked on the mint await above.
+    // Simulate the Twilio WS dying right there (Spec 02/03's real close handlers call exactly
+    // this function).
+    teardownSession(session, 'twilio-closed-mid-mint');
+    expect(session.tornDown).toBe(true);
+    expect(socket.closeCalls.length).toBe(1);
+
+    mint.resolve(fakeMint); // let the parked bootstrap resume
+    await bridgePromise;
+
+    expect(gw.captured.opts, 'the gateway leg must never open once the session is torn down').toBe(undefined);
+    expect(mcpCreateCalls, 'no MCP client should ever be created once the session is torn down').toBe(0);
+    // teardownSession is idempotent — the resumed bootstrap bailing must not close the socket twice.
+    expect(socket.closeCalls.length).toBe(1);
+  });
+
+  it('teardown while parked on a slow MCP connect: the newly-created client is closed, not leaked, and no gateway leg opens', async () => {
+    const { session, socket } = makeSession();
+    sessions.set(session.streamSid, session);
+
+    const mcp = fakeMcpClient();
+    const mcpConnect = deferred<Client>();
+    const gw = fakeOpenGatewayLeg();
+    let mcpCreateCalled = false;
+
+    const bridgePromise = startSessionBridge(session, pendingCallResolving(fakeMint), {
+      config: fixtureConfig,
+      openGatewayLeg: gw.fn,
+      createMcpClient: async () => {
+        mcpCreateCalled = true;
+        return mcpConnect.promise;
+      },
+      fetchToolDefs: async () => [],
+    });
+
+    // Wait until execution has actually reached (and parked on) the MCP-connect await — the
+    // mint promise above resolves asynchronously (Promise.resolve), so this needs at least one
+    // real tick, unlike the synchronous-parking guarantee in the slow-mint case above.
+    await waitUntil(() => mcpCreateCalled);
+
+    teardownSession(session, 'twilio-closed-mid-mcp-connect');
+    expect(session.tornDown).toBe(true);
+
+    mcpConnect.resolve(mcp.client); // let the parked bootstrap resume
+    await bridgePromise;
+
+    expect(gw.captured.opts, 'the gateway leg must never open once the session is torn down').toBe(undefined);
+    expect(mcp.closeCalls.length, 'the MCP client created just before teardown must be closed, not leaked').toBe(1);
+    expect(socket.closeCalls.length).toBe(1);
   });
 });
 

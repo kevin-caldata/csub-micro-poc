@@ -42,6 +42,7 @@ import { sendMedia, nextMarkName } from './twilio-media.js';
 import type { PendingCall } from './twiml.js';
 import {
   isBenignGatewayError,
+  isCreateWhileActiveError,
   openGatewayLeg as realOpenGatewayLeg,
   type GatewayLegCallbacks,
 } from './gateway.js';
@@ -198,6 +199,16 @@ export function dispatch(s: Session, ev: ServerEvent): void {
       const fields = { event: 'error', code: ev.code, raw: safeRaw(ev.raw) };
       if (isBenignGatewayError(ev)) {
         s.log('warn', ev.message, fields);
+        // Spec 07 R12 lost-race recovery: this specific benign shape ("already has an active
+        // response") is exactly what the ToolLoop's own response-create losing a race against a
+        // VAD-auto response looks like on the wire. Feed it to the ToolLoop so it resets its
+        // idempotence guard and the deferred retry engages on the next response-done — findings
+        // review: before this fix, `onBenignCreateWhileActiveError` had zero production callers,
+        // so a lost gate race silently stalled the follow-up response forever (masked by the
+        // warn-not-teardown path above looking like everything was fine).
+        if (isCreateWhileActiveError(ev)) {
+          s.toolLoop?.onBenignCreateWhileActiveError();
+        }
       } else {
         s.log('error', ev.message, fields);
         s.teardown('gateway-error');
@@ -374,6 +385,22 @@ export async function startSessionBridge(
     return;
   }
 
+  // Findings review (teardown/bootstrap race): every await in this function is a point where
+  // the Twilio WS can die and run `teardownSession` to completion WHILE this function is parked
+  // — `onTeardown` fires against whatever the Session shape looks like at THAT instant, then
+  // this function resumes and (absent this check) goes on to create/open real resources
+  // (`mcpClient`, `toolLoop`, the gateway WS leg) that `onTeardown` already ran and will never
+  // run again (`teardownSession`'s `if (s.tornDown) return` latch is one-shot). Bail immediately
+  // after EVERY await below once `session.tornDown` is observed true, closing anything this
+  // function itself just created — never rely on a second `onTeardown` invocation.
+  if (session.tornDown) {
+    session.log('warn', 'session torn down during mint await; abandoning bootstrap', {
+      event: 'bootstrap-abandoned',
+      stage: 'mint',
+    });
+    return;
+  }
+
   session.recorder.seedGreeting({
     getTokenMs: mint.getTokenMs,
     tokenExpiresAt: mint.expiresAt !== undefined ? String(mint.expiresAt) : undefined,
@@ -394,6 +421,18 @@ export async function startSessionBridge(
   } catch (err) {
     session.log('error', 'mcp client create failed', { event: 'mcp-client-failed', err: String(err) });
   }
+
+  if (session.tornDown) {
+    // One await later, same race: `onTeardown` already ran with `session.mcpClient` still
+    // undefined, so nothing else will ever close the client we just (maybe) created — close it
+    // ourselves before bailing, never assign it onto the (already torn-down) Session.
+    if (mcpClient) void closeMcpClient(mcpClient);
+    session.log('warn', 'session torn down during MCP connect await; abandoning bootstrap', {
+      event: 'bootstrap-abandoned',
+      stage: 'mcp-connect',
+    });
+    return;
+  }
   session.mcpClient = mcpClient;
 
   let tools: RealtimeToolDef[] = [];
@@ -404,6 +443,18 @@ export async function startSessionBridge(
       session.log('error', 'fetch tool defs failed', { event: 'tool-defs-failed', err: String(err) });
       tools = [];
     }
+  }
+
+  if (session.tornDown) {
+    // Same race, one await later still — the MCP client (now on `session.mcpClient`) is the one
+    // resource that exists at this point; close it before bailing, before ever constructing the
+    // ToolLoop or opening the gateway leg.
+    if (mcpClient) void closeMcpClient(mcpClient);
+    session.log('warn', 'session torn down during fetch-tool-defs await; abandoning bootstrap', {
+      event: 'bootstrap-abandoned',
+      stage: 'fetch-tool-defs',
+    });
+    return;
   }
 
   // (4) ToolLoop — one per call (Spec 07 R10), constructed only when an MCP client exists (no
@@ -505,4 +556,12 @@ export async function startSessionBridge(
     config,
     callbacks,
   });
+
+  if (session.tornDown) {
+    // Belt-and-suspenders: no await sits between the fetch-tool-defs check above and this
+    // synchronous `openGatewayLeg` call, so this should be unreachable today — but a leaked
+    // live gateway WS nobody ever closes is exactly the bug this fix exists to close, so guard
+    // the call site itself rather than trust that invariant to hold forever.
+    session.gateway.close(1000, 'call ended');
+  }
 }
