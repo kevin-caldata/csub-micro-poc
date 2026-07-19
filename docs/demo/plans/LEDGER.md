@@ -112,6 +112,7 @@ Format: `| DEV-NN | date | task | what deviated / why | resolution (respin / pla
 
 | ID | Date | Task | Deviation | Resolution |
 |---|---|---|---|---|
+| DEV-01 | 2026-07-19 | pre-dispatch | Cross-plan review NEEDS_HUMAN: master A5 required operator (661) 654-2782 in src/gateway.ts; Spec 01 Safety backup deliberately carries only the three crisis numbers | Human decided: Spec 01 governs. Master plan amended (D15, G3, A5 — byte-identity where-present). Human reaffirmed SIMULATION-ONLY: numbers are spoken information, never transfer targets; no task may add forwarding |
 
 <!-- append DEV rows above this line as they occur; never edit or delete existing rows -->
 
