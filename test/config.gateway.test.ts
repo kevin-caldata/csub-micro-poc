@@ -43,3 +43,29 @@ describe('loadConfig — Spec 04 R2 gateway keys', () => {
     expect(loadConfig({ ...BASE }).gatewayTags).toBe(undefined);
   });
 });
+
+// Findings review (Minor — GATEWAY_WS_URL prod guard): GATEWAY_WS_URL (Spec 10 R10) is a
+// test-harness-only seam that opens a bare, unauthenticated WS at whatever URL it names, skipping
+// mintRealtimeToken entirely — it must never reach a real deployment. RAILWAY_PUBLIC_DOMAIN is
+// injected by Railway itself (never hand-set), so its presence is a reliable "this is production"
+// signal loadConfig can refuse to boot against.
+describe('loadConfig — GATEWAY_WS_URL production guard (Spec 10 R10)', () => {
+  it('throws when GATEWAY_WS_URL is set alongside RAILWAY_PUBLIC_DOMAIN', () => {
+    const { PUBLIC_HOST: _omit, ...base } = BASE;
+    expect(() =>
+      loadConfig({ ...base, RAILWAY_PUBLIC_DOMAIN: 'x.up.railway.app', GATEWAY_WS_URL: 'ws://127.0.0.1:9999' }),
+    ).toThrow(/GATEWAY_WS_URL/);
+  });
+
+  it('allows GATEWAY_WS_URL when RAILWAY_PUBLIC_DOMAIN is absent (local/test harness use)', () => {
+    const c = loadConfig({ ...BASE, GATEWAY_WS_URL: 'ws://127.0.0.1:9999' });
+    expect(c.gatewayWsUrl).toBe('ws://127.0.0.1:9999');
+  });
+
+  it('allows RAILWAY_PUBLIC_DOMAIN alone (real Railway deploy, GATEWAY_WS_URL unset)', () => {
+    const { PUBLIC_HOST: _omit, ...base } = BASE;
+    const c = loadConfig({ ...base, RAILWAY_PUBLIC_DOMAIN: 'x.up.railway.app' });
+    expect(c.gatewayWsUrl).toBe(undefined);
+    expect(c.publicHost).toBe('x.up.railway.app');
+  });
+});

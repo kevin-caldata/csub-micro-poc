@@ -70,6 +70,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       'Invalid environment configuration:\n  - set PUBLIC_HOST (local dev, e.g. your ngrok host) ' +
       'or run on Railway where RAILWAY_PUBLIC_DOMAIN is injected after Generate Domain.');
   }
+  // Findings review (Minor — prod guard): GATEWAY_WS_URL (Spec 10 R10) is a TEST-HARNESS-ONLY
+  // seam that skips mintRealtimeToken/getWebSocketConfig entirely and opens a bare, unauthenticated
+  // WS straight at whatever URL it names — it must never reach a real deployment. RAILWAY_PUBLIC_DOMAIN
+  // is injected by Railway itself (never hand-set), so its presence is a reliable production
+  // signal; refuse to boot rather than silently bridge every call through a test double.
+  if (e.GATEWAY_WS_URL && e.RAILWAY_PUBLIC_DOMAIN) {
+    throw new Error(
+      'Invalid environment configuration:\n  - GATEWAY_WS_URL must never be set when RAILWAY_PUBLIC_DOMAIN ' +
+      'is present (Spec 10 R10 test harness override reaching production) — unset GATEWAY_WS_URL.');
+  }
   const gatewayTags = e.GATEWAY_TAGS
     ? e.GATEWAY_TAGS.split(',').map(t => t.trim()).filter(t => t.length > 0)
     : undefined;
