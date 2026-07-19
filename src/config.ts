@@ -34,6 +34,15 @@ const EnvSchema = z.object({
   // network access. No validation beyond "it's a string" (absent = undefined); never set in
   // production. Additive-only per master plan §6 R-2 — no existing key touched.
   GATEWAY_WS_URL: z.string().min(1).optional(),
+  // ── Demo Spec 03: delegated-intelligence knowledge tool ──
+  MCP_MODEL_ID: z.string().min(1).default('google/gemini-3.1-flash-lite'),
+  MCP_MODEL_MAX_TOKENS: z.coerce.number().int().positive().default(150),
+  // MUST stay strictly below runTool's 5000 ms transport cap (src/tools.ts:42) so the handler's
+  // clean error envelope always wins the race against the SDK's generic RequestTimeout
+  // [findings/16 C3, C12].
+  MCP_TOOL_TIMEOUT_MS: z.coerce.number().int().positive()
+    .lt(5000, 'MCP_TOOL_TIMEOUT_MS must be < 5000 (runTool transport cap, src/tools.ts:42)')
+    .default(3500),
 });
 
 export interface AppConfig {
@@ -58,6 +67,9 @@ export interface AppConfig {
   twilioValidateUpgrade: boolean;
   /** Spec 10 R10 (test harness only) — see EnvSchema.GATEWAY_WS_URL doc comment above. */
   gatewayWsUrl: string | undefined;
+  mcpModelId: string;        // ← e.MCP_MODEL_ID
+  mcpModelMaxTokens: number; // ← e.MCP_MODEL_MAX_TOKENS
+  mcpToolTimeoutMs: number;  // ← e.MCP_TOOL_TIMEOUT_MS
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -105,5 +117,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     gatewayTags: gatewayTags && gatewayTags.length > 0 ? gatewayTags : undefined,
     twilioValidateUpgrade: e.TWILIO_VALIDATE_UPGRADE === 'true',
     gatewayWsUrl: e.GATEWAY_WS_URL,
+    mcpModelId: e.MCP_MODEL_ID,
+    mcpModelMaxTokens: e.MCP_MODEL_MAX_TOKENS,
+    mcpToolTimeoutMs: e.MCP_TOOL_TIMEOUT_MS,
   };
 }
