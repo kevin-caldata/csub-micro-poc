@@ -52,7 +52,7 @@ M-A gate: Status ` - ` · Date ` ` · Note ` `
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
-| DB1.1 | 03-knowledge/01-config-keys-and-dependency.md | — (early-dispatch allowed: file set disjoint from every DA task, README §2; needs npm registry access, PD-07) | D | | |
+| DB1.1 | 03-knowledge/01-config-keys-and-dependency.md | — (early-dispatch allowed: file set disjoint from every DA task, README §2; needs npm registry access, PD-07) | OK | ce81116 | review APPROVED zero findings; ai@7.0.31 one-package add verified (npm ls); 362/362 in lane; 21/21 config tests on main post-merge |
 | DB1.2 | 03-knowledge/02-knowledge-tool-handler.md | DB1.1, M-A (DA1 `CSUB_CORPUS` + DA2.1–.3 mcp-server body) | - | | |
 | DB2 | 01-persona/01-instructions-and-greeting.md | M-A (DA2.1–.3 merged — tool names live) | - | | |
 
