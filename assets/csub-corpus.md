@@ -30,13 +30,13 @@ A few more offices callers commonly ask about:
 - Dining Services: main office inside the Icardo Center. No direct line published; route through the main operator, (661) 654-2782. Handles meal plan changes and dining-hall hours questions.
 - Veterans Services: Student Services Building, room 22 SA. No direct line published; route through the main operator, (661) 654-2782, or veterans@csub.edu. Handles GI Bill certification and veteran-student benefits questions.
 
-Building codes on campus follow a native short-code format: "47 SA" (Student Services Building), "28 HC" (Health Center), "108 B" (Administration), "55 SA," "130 SA," "112 B," "22 SA." If a caller mentions a building code, RIO should recognize it as a location, not a typo, and can offer to spell it out if the caller seems unsure what it means.
+Building codes on campus follow a native short-code format: "47 SA" (Student Services Building), "28 HC" (Health Center), "108 B" (Administration), "55 SA," "130 SA," "112 B," "22 SA." If a caller mentions a building code, Rio should recognize it as a location, not a typo, and can offer to spell it out if the caller seems unsure what it means.
 
 The campus itself is laid out around a central mall connecting the Student Services Building, the Icardo Center, and the Walter W. Stiern Library, with most academic buildings arranged along two rings extending from that mall. A caller unfamiliar with campus who says they're "lost near the library" can be told the Student Services Building — home to Admissions, the Registrar, and Financial Aid — is directly across the central mall from the library, an easy five-minute walk.
 
-A general note on how RIO should use this directory: when a caller names an office CSUB doesn't actually organize the way the caller expects — for example, asking for "the housing phone number" when Housing and Residential Life doesn't publish a direct line — RIO should say plainly that no direct number is published for that office and offer the operator line, (661) 654-2782, or the office's email address instead, rather than guessing at a number that doesn't exist.
+A general note on how Rio should use this directory: when a caller names an office CSUB doesn't actually organize the way the caller expects — for example, asking for "the housing phone number" when Housing and Residential Life doesn't publish a direct line — Rio should say plainly that no direct number is published for that office and offer the operator line, (661) 654-2782, or the office's email address instead, rather than guessing at a number that doesn't exist.
 
-A note on hours during university closures: CSUB observes standard state holidays (New Year's Day, Memorial Day, Independence Day, Labor Day, Thanksgiving and the day after, and the winter closure between Christmas and New Year's Day), during which every office listed above is closed, including the main operator line. A caller reaching RIO on one of those dates should be told the campus is closed for the holiday rather than given a same-day appointment or callback promise.
+A note on hours during university closures: CSUB observes standard state holidays (New Year's Day, Memorial Day, Independence Day, Labor Day, Thanksgiving and the day after, and the winter closure between Christmas and New Year's Day), during which every office listed above is closed, including the main operator line. A caller reaching Rio on one of those dates should be told the campus is closed for the holiday rather than given a same-day appointment or callback promise.
 
 Mail sent to any campus office should use the single shared campus address, 9001 Stockdale Highway, Bakersfield, CA 93311, along with the department name and building/room code — CSUB's internal mail system routes by department name and code rather than by a separate mailing address per office.
 
@@ -49,7 +49,7 @@ Regular-term hours: phone support runs 7 AM–6 PM Monday through Thursday and 7
 
 Summer hours are currently in effect and differ from the regular-term schedule above — this is the schedule a caller reaches right now: phone support runs 7 AM–6 PM Monday through Thursday only (no Friday phone coverage in summer). The walk-up counter runs 8 AM–5 PM Monday through Thursday, and the counter is closed noon–1 PM for a lunch break every day it's open.
 
-The most common categories of help the Service Center handles, so RIO can set expectations before transferring a caller: campus Wi-Fi connection problems (network name "CSUB-WiFi," eduroam also supported for visiting researchers); classroom and lecture-hall AV equipment, including projector and microphone troubleshooting for faculty; software installs for campus-licensed tools like Microsoft 365 and antivirus software on university-owned devices; and general account lockouts that aren't specifically a forgotten-password case (those go through MyID self-service first, described in the next section).
+The most common categories of help the Service Center handles, so Rio can set expectations before transferring a caller: campus Wi-Fi connection problems (network name "CSUB-WiFi," eduroam also supported for visiting researchers); classroom and lecture-hall AV equipment, including projector and microphone troubleshooting for faculty; software installs for campus-licensed tools like Microsoft 365 and antivirus software on university-owned devices; and general account lockouts that aren't specifically a forgotten-password case (those go through MyID self-service first, described in the next section).
 
 If the ITS Service Center is closed when someone calls, the ServiceNow portal at csub.service-now.com is available at any hour to log a ticket for a callback the next business day. A caller who logs a ticket after hours should expect a response the following business morning, not immediately.
 
@@ -58,7 +58,7 @@ Every fact in this section is drawn from CSUB's real published support schedule 
 ## NetID, MyID password reset, and Duo 2-Step
 <!-- topic: it_help -->
 
-CSUB's identity vocabulary, so RIO and the caller are speaking the same language:
+CSUB's identity vocabulary, so Rio and the caller are speaking the same language:
 
 - **NetID** — a student or employee's campus username.
 - **MyID** — the self-service portal for managing that NetID, at myid.csub.edu.
@@ -81,11 +81,11 @@ Duo 2-Step protects Microsoft 365, myCSUB, Canvas, and PeopleSoft, plus more tha
 
 A caller who has lost their phone and has no backup device enrolled should call the ITS Service Center at (661) 654-4357 for manual identity verification and device reset. For a suspected compromised account or phishing attempt, the ITS security line is (661) 654-3425 — that's a distinct line from general help desk support, reserved for security incidents specifically.
 
-Security note RIO must always honor: **NEVER share your Duo code with anyone.** A Duo push code or six-digit backup code is never something CSUB staff — or RIO — will ask a caller to read aloud. If a caller tries to read one out, RIO should decline and explain why: a legitimate CSUB system never needs a caller to say a Duo code out loud over the phone, and doing so would hand account access to whoever is listening.
+Security note Rio must always honor: **NEVER share your Duo code with anyone.** A Duo push code or six-digit backup code is never something CSUB staff — or Rio — will ask a caller to read aloud. If a caller tries to read one out, Rio should decline and explain why: a legitimate CSUB system never needs a caller to say a Duo code out loud over the phone, and doing so would hand account access to whoever is listening.
 
-Support tickets opened through the ITS Service Center live in the ServiceNow system and are assigned numbers formatted like INC0012345 (a fabricated example ticket number, shown here only to illustrate the format a caller might reference). A caller who already has a ticket number can give it to RIO so the conversation can reference the existing case rather than starting a new one.
+Support tickets opened through the ITS Service Center live in the ServiceNow system and are assigned numbers formatted like INC0012345 (a fabricated example ticket number, shown here only to illustrate the format a caller might reference). A caller who already has a ticket number can give it to Rio so the conversation can reference the existing case rather than starting a new one.
 
-A related but distinct scenario callers raise: a student whose Duo enrollment is tied to a phone they no longer own, rather than one that's simply misplaced for the moment. That's still routed the same way — a call to the ITS Service Center at (661) 654-4357 for manual verification — but it typically takes a little longer than a simple lost-phone reset, since staff will walk through additional identity questions before re-enrolling a brand-new device as a student's only Duo factor. RIO should set that expectation rather than implying the call alone instantly fixes it.
+A related but distinct scenario callers raise: a student whose Duo enrollment is tied to a phone they no longer own, rather than one that's simply misplaced for the moment. That's still routed the same way — a call to the ITS Service Center at (661) 654-4357 for manual verification — but it typically takes a little longer than a simple lost-phone reset, since staff will walk through additional identity questions before re-enrolling a brand-new device as a student's only Duo factor. Rio should set that expectation rather than implying the call alone instantly fixes it.
 
 Multi-factor fatigue — a student getting repeated Duo push notifications they didn't request — is worth flagging distinctly from a simple lockout. If a caller describes that pattern, the right advice is to deny every unexpected push, change the account password immediately through the MyID flow above, and then call the ITS security line, (661) 654-3425, rather than the general help desk, since unexpected pushes usually mean someone else already has the account password and is trying to get past the second factor.
 
@@ -171,7 +171,7 @@ CSUB doesn't have one single advising phone line — advising is organized by co
 
 Every continuing student has an assigned staff advisor, findable in the myCSUB portal under the student's academic record.
 
-The right way to help a caller with an advising question: ask the caller's major first, then direct them to that college's advising center by name. Each center keeps its own posted hours — a caller should be told to check the center's page in the campus directory or call the main operator, (661) 654-2782, for the center's current hours, since RIO does not fabricate a direct advising phone number. myCSUB is also always available for finding an assigned advisor's contact information directly.
+The right way to help a caller with an advising question: ask the caller's major first, then direct them to that college's advising center by name. Each center keeps its own posted hours — a caller should be told to check the center's page in the campus directory or call the main operator, (661) 654-2782, for the center's current hours, since Rio does not fabricate a direct advising phone number. myCSUB is also always available for finding an assigned advisor's contact information directly.
 
 Advising centers generally run appointment-based scheduling during the regular term and shift to walk-in availability during the two weeks before each term starts, to handle the seasonal spike in schedule-building questions. A student who hasn't been assigned an advisor yet — usually true for brand-new students before their first Runner Rundown session — is assigned one automatically as part of that orientation appointment, so a caller in that situation should simply be pointed back to signing up for Runner Rundown rather than searching for an advisor on their own.
 
@@ -180,7 +180,7 @@ Students who are double majors or who are still deciding between two colleges so
 ## Counseling and crisis resources
 <!-- topic: other -->
 
-Note: for a caller in distress, RIO escalates directly; this section is reference information.
+Note: for a caller in distress, Rio escalates directly; this section is reference information.
 
 The CSUB Counseling Center is located in the Rivendell building, on the west side of campus near Parking Lot E. Phone: (661) 654-3366. Regular hours are Monday through Friday, 8 AM–5 PM. After hours, calling (661) 654-3366 and pressing 2 at the voicemail menu connects a caller directly to a crisis counselor, any time of day.
 
@@ -222,10 +222,10 @@ Parking for NextTech Kern attendees works the same way as any other campus event
 
 Past NextTech Kern attendees have described the event as a rare chance to see applied AI and cybersecurity work happening locally in Kern County rather than only reading about it from larger coastal tech hubs — a detail that resonates with the "regional opportunity" framing CSUB uses in its own event marketing.
 
-## About RIO and CSUB basics
+## About Rio and CSUB basics
 <!-- topic: other -->
 
-RIO stands for Roadrunner Intelligent Operator — an AI phone assistant demo built for CSUB. Every fact RIO gives a caller comes from this simulated demo data, and RIO always identifies itself as an AI whenever a caller asks.
+Rio stands for Roadrunner Intelligent Operator — an AI phone assistant demo built for CSUB. Every fact Rio gives a caller comes from this simulated demo data, and Rio always identifies itself as an AI whenever a caller asks.
 
 A few CSUB basics that come up often in calls: the campus address is 9001 Stockdale Highway, Bakersfield, CA 93311, and the main operator line is (661) 654-2782.
 
@@ -235,10 +235,10 @@ CSUB's school colors are blue and gold.
 
 House vocabulary a caller might hear or use: "'Runner Nation" for the campus community, "Go 'Runners!" as the standard cheer, RunnerConnect as the name of the campus involvement and clubs platform, and *The Runner* as the name of the student newspaper.
 
-A caller who asks what RIO can and can't do should hear a plain answer: RIO can look up simulated directory information, simulated financial aid and registration dates, and simulated event details from this document, and it can walk through simulated identity-verification and password-reset flows. RIO cannot access a real student's actual account, cannot make a real financial transaction, and cannot transfer a call to a real human line — every "transfer" and every "lookup" in this proof-of-concept is simulated, and RIO says so plainly whenever it matters.
+A caller who asks what Rio can and can't do should hear a plain answer: Rio can look up simulated directory information, simulated financial aid and registration dates, and simulated event details from this document, and it can walk through simulated identity-verification and password-reset flows. Rio cannot access a real student's actual account, cannot make a real financial transaction, and cannot transfer a call to a real human line — every "transfer" and every "lookup" in this proof-of-concept is simulated, and Rio says so plainly whenever it matters.
 
 CSUB itself was founded in 1965 as one of the newer campuses in the California State University system, and it has grown from a small commuter campus into a comprehensive university offering undergraduate and graduate programs across business, education, natural sciences, engineering, arts, humanities, and social sciences. The Bakersfield location places it in the heart of California's Central Valley, and much of the university's community identity — the "'Runner Nation" framing, the emphasis on regional partnerships like NextTech Kern, and the strong first-generation-student support programs — reflects that regional mission.
 
-Athletics at CSUB compete in NCAA Division I as the Roadrunners, with Rowdy leading crowd energy at home games at the Icardo Center, the university's main arena for basketball and volleyball. Students, staff, and visiting families calling to ask general "what's it like at CSUB" questions are a normal, expected kind of call for RIO to receive, not just transactional questions like hours and phone numbers — a caller asking something conversational like "what's the school spirit like" or "tell me about the mascot" should get a warm, genuine answer rather than being redirected to a human.
+Athletics at CSUB compete in NCAA Division I as the Roadrunners, with Rowdy leading crowd energy at home games at the Icardo Center, the university's main arena for basketball and volleyball. Students, staff, and visiting families calling to ask general "what's it like at CSUB" questions are a normal, expected kind of call for Rio to receive, not just transactional questions like hours and phone numbers — a caller asking something conversational like "what's the school spirit like" or "tell me about the mascot" should get a warm, genuine answer rather than being redirected to a human.
 
-Finally, a housekeeping note for RIO itself: this entire document is the only source of campus facts RIO should draw on. If a caller asks something this document doesn't cover, the honest answer is that RIO doesn't have that specific information rather than guessing — and if the question sounds urgent or safety-related, the Counseling and crisis resources section above, and the operator line, (661) 654-2782, are the right places to route the caller.
+Finally, a housekeeping note for Rio itself: this entire document is the only source of campus facts Rio should draw on. If a caller asks something this document doesn't cover, the honest answer is that Rio doesn't have that specific information rather than guessing — and if the question sounds urgent or safety-related, the Counseling and crisis resources section above, and the operator line, (661) 654-2782, are the right places to route the caller.

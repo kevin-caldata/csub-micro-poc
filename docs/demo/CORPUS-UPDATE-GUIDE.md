@@ -31,6 +31,7 @@ New content follows the same rules the original corpus was written to:
 - American English, warm and factual, matching the tone of real campus communications. Don't hedge individual facts ("we think," "probably") — the top-of-file banner is what discloses the simulation, not per-fact qualifiers.
 - A new section gets a `##` heading and, on the very next line, a `<!-- topic: ... -->` tag whose value is one of the eight enum values below. A new fact within an existing section follows the fabrication rule that already governs that section (verified facts stay verbatim; anything not independently verifiable gets a plausible fabricated value stated with the same confidence as a real one).
 - **Phone numbers are never invented — only numbers from the allowlist below may appear anywhere in the corpus.** If a new or fabricated office needs a contact point, give it the main operator line or an email address instead of inventing a number.
+- **Voice-formatting: write "Rio," not "RIO," in prose** — this text is read aloud by a text-to-speech voice model, and a voice model spells all-caps tokens out letter by letter (that's the "R... I... O..." bug this rule exists to prevent). The one exception is the four-line SIMULATED-DATA banner at the top of the file, which keeps "RIO" — it is never sent through the answering model as spoken prose.
 
 Phone/short-code allowlist (the complete set of dialable strings permitted anywhere in the corpus):
 
@@ -67,3 +68,7 @@ If content ever needs to push past roughly 100 KB, do **not** bolt on retrieval 
 - The four SIMULATED-DATA banner lines — byte-exact, and always the first four lines of the file, with nothing above them (no front matter, no blank line).
 - The crisis numbers in the counseling section: Counseling Center (661) 654-3366 (press 2 after hours), 988, UPD (661) 654-2111 / 911, operator (661) 654-2782. These change only with a re-verified source, because the `escalate_to_human` tool speaks the same numbers and the two surfaces must never disagree.
 - The twelve section headings and their `<!-- topic: ... -->` tags — the test suite pins the heading text, the order, and the tag vocabulary. Adding a thirteenth section means updating `test/corpus.test.ts` in the same commit.
+
+---
+
+Amended 2026-07-19: voice-formatting — speakable text uses 'Rio' (TTS spelled out all-caps RIO); human decision.
