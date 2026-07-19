@@ -269,6 +269,126 @@ verify without live traffic.
    event pair), whereas if only one of the two disappears, H1 is likely wrong and H2/H3 need a second
    look.
 
+---
+
+## Addendum (2026-07-19 18:05-18:10 UTC) — production recurrence data, re-ranking
+
+**New evidence (build `0d12077`, three calls, instrumentation from the "how to verify live" section
+above now deployed and capturing per-delta/burst stats):**
+
+- `CAb9974f` (65 s): clean. Bursts: greeting 32 deltas / 101,600 B / 2409 ms; other turns 9-26 deltas.
+- `CA2aa862` (110 s): **survived the single largest burst of the day** — 70 deltas / 223,600 B / 5228 ms
+  (a long `route_call` handoff blurb) — followed by 27 s of caller silence with **no error**, then a
+  clean caller hangup.
+- `CAf40e09` (58 s): 31924 at 18:09:38.4, **~1.1 s** after its final response burst (42 deltas /
+  131,600 B / 2994 ms) ended. Socket died 1006 abnormal **~30 s later** (18:10:08). This call had 2
+  barge-ins (clear+truncate) earlier in the call, both handled cleanly by our own logs.
+- Every delta across **all three calls, in both surviving and failing bursts**, is exactly
+  `maxDeltaBytes = 3200` — i.e. the gateway/transcoder path emits perfectly uniform 3,200-byte decoded
+  μ-law frames (400 ms of audio each at 8 kHz), not variable-sized chunks.
+
+### Re-audit of the mark schema against Twilio's spec (fresh eyes)
+
+16. **Re-reading `src/twilio-media.ts:418-424` and `src/bargein.ts:38-43` against
+    https://www.twilio.com/docs/voice/media-streams/websocket-messages finds no schema defect.** Every
+    `mark` frame is `{event:'mark', streamSid, mark:{name}}`, one per delta, name = `r<responseId>:<seq>`
+    (short, ASCII, monotonic). Twilio's own doc describes exactly this pattern as the intended use: send
+    a mark after each media message, Twilio echoes it back once that segment finishes playing, sequenced
+    in send order. A 42-70 count over one response is high relative to earlier calls but is not, on the
+    documented contract, an unsupported shape — Twilio explicitly designs mark to be sent per chunk for
+    fine-grained playback tracking.
+
+17. **No Twilio documentation, help-center article, or error-code page found stating any hard cap on
+    outstanding/unacknowledged marks per Stream.** A dedicated search for a mark-queue/backlog limit
+    turned up nothing beyond the same `websocket-messages` page's general description (searched July
+    2026: "Twilio Media Streams mark queue limit outstanding marks protocol error backlog" — no
+    corroborating hits). This doesn't prove no such internal limit exists, but there is no positive
+    evidence for one either.
+
+18. **The new data directly falsifies a mark-volume/backlog-depth trigger as a standalone cause: the
+    call with the LARGEST mark backlog (70 outstanding marks, `CA2aa862`) is the one that survived**,
+    while a call with a smaller backlog (42 marks, `CAf40e09`) failed. If Twilio enforced any outstanding-
+    mark ceiling, the 70-mark call should have failed at least as readily as the 42-mark call. Mark
+    volume alone is not the discriminator.
+
+### H1 (unpaced burst / overspeed) is refuted by the new data
+
+19. **Frame size is uniform and tiny (3,200 B) and instantaneous byte rate is trivial (~13 frames/s ≈
+    42 KB/s) in every call, successful or not** — far below any plausible proxy/TCP-window stress
+    threshold, and identical across outcomes. This directly falsifies the original Part-3 "bursty writes
+    overwhelm Railway's edge proxy" framing of H1 as stated: there is no meaningful burst-size or
+    byte-rate difference between the calls that failed and the ones that didn't.
+
+20. **The audio-duration-vs-wall-clock overspeed ratio (how much faster than realtime deltas arrive) is
+    also constant across all three calls (~5.3-5.6x realtime)** — recomputed from the new counts
+    (32×400 ms/2409 ms ≈ 5.3x; 70×400 ms/5228 ms ≈ 5.35x; 42×400 ms/2994 ms ≈ 5.6x). This ratio is a
+    fixed characteristic of the gateway's own delta emission cadence, not a per-call anomaly, and it is
+    *higher*, not lower, for the survived call than for the failed one. **H1, in both its "raw bandwidth
+    burst" and "overspeed backlog" framings, is refuted.**
+
+### Re-ranked hypotheses
+
+**H2' (NEW top hypothesis, medium-high confidence): random, per-connection Railway-edge/Twilio-edge
+transport flakiness, with any nontrivial burst of traffic acting only as the *detector* of a
+pre-existing fault, not its cause.** Under this model, a minority of the long-lived TCP/WS connections
+between Twilio and Railway's edge (or Railway's edge and our container) intermittently develop a
+corrupted or half-open transport state for reasons unrelated to our application's message content, size,
+or cadence (matching claim 6's documented Railway edge-proxy WS flakiness reports). Because our outbound
+traffic is otherwise idle between responses, the fault only becomes *visible* to Twilio's WS parser once
+enough application traffic flows through the already-bad connection (any response burst gives it that
+opportunity) — explaining why 31924 always follows "a long-ish response," without any burst *property*
+(size, rate, mark count) actually driving the failure. The variable 1-6 s detection lag and ~30-45 s
+delayed real close (1006) are consistent with a proxy/edge-level fault being detected and reported on
+different timelines by different components, not a fixed applic­ation-level timer.
+- **Supporting evidence:** incidence ~3 of 8 calls today with no reliable content/size/rate discriminator
+  found (claims 18-20); the single largest burst of the day survived cleanly; and — most tellingly —
+  the *same* traffic shape ("one long-ish response, then extended caller silence, then either an error or
+  a clean hangup") produced **both outcomes** on different calls (`CAc63bcb` in the original evidence
+  failed in exactly this shape; `CA2aa862` survived it here). Two calls with materially identical
+  application-level behavior diverging in outcome is the classic signature of a per-connection/random
+  infrastructure fault, not a deterministic bug in our send path.
+
+**H3 (demoted, kept open, low-medium confidence): mark-echo/clear interaction residue from earlier
+barge-ins.** Weakened by claim 18 (raw mark volume doesn't predict failure) but not fully closed: 2 of
+the 3 calls that have ever failed with 31924 (`CA1d8438`, `CAf40e09`) had an earlier barge-in
+(`clear`+truncate) mid-call before the fatal burst, while the survived big-burst call's barge-in history
+is unrecorded in the new evidence. `CAc63bcb`, however, failed with **no** barge-in anywhere in the call,
+which is the piece of evidence keeping this hypothesis at low-medium rather than promoting it — a clean
+trigger would need to explain a barge-in-free failure too. Recorded as open, not pursued further without
+more barge-in-history data on the survived calls.
+
+**H4 (further demoted, very low confidence): permessage-deflate / compression mismatch.** No new evidence
+either supports or refutes this; already closed on our side (claim 5), and a connection-level flakiness
+model (H2') does not require it, so it drops in priority rather than being newly implicated.
+
+### The single cheapest discriminating experiment
+
+21. **Proposed experiment: add a lightweight WS ping/pong heartbeat on the *Twilio* leg itself** — a
+    small, `gateway.ts:391-396`-style addition (a few lines, no protocol/schema change, fully
+    G9-reviewable): on the Twilio socket, `setInterval(() => { if (socket.readyState === OPEN)
+    socket.ping(); }, 5000)`, logging the round-trip time on each `pong` and a warning if a `pong` is
+    missing before the next `ping` fires. This is deliberately NOT a mark-batching change — the new data
+    (claim 18) makes mark volume an unlikely lever, so a mark-batching experiment would probably show no
+    effect either way and cost a schema-adjacent code change for a low-value answer. A ping/pong probe on
+    the Twilio leg directly tests H2' at minimal cost and with zero risk to call behavior (`ping()`
+    frames are protocol-legal, invisible to the application layer, and Twilio's `ws`-based client
+    auto-pongs).
+22. **What the next occurrence would tell us:** if a 31924 event is preceded (within the same connection,
+    looking back a few ping intervals) by a missed pong, an elevated RTT, or any ping/pong irregularity,
+    that is strong, near-direct confirmation of H2' (the transport was already unhealthy before the
+    application-level symptom surfaced). If pongs remain fast and unbroken right up to the moment 31924
+    fires, with no anomaly at all, H2' loses support and the investigation should pivot to a Twilio-side
+    or gateway-side trigger not yet identified (a genuine App content/protocol edge case would need
+    fresh evidence at that point, since H1 and mark-volume are both now weak per claims 19-20 and 18).
+23. **Secondary, lower-cost signal to collect in parallel at zero code cost:** for every future 31924,
+    pull the call's Twilio Voice Insights edge/media-region metadata and barge-in history (both already
+    loggable/queryable today) and check whether failing calls cluster on a specific Twilio media region
+    or specifically require a prior barge-in — either finding would sharpen H2' (region clustering) or
+    partially rehabilitate H3 (barge-in requirement), respectively, without waiting for the heartbeat
+    deploy.
+
+---
+
 ## Sources
 
 - [31924: Stream - Websocket - Protocol Error](https://www.twilio.com/docs/api/errors/31924)
