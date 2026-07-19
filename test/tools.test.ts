@@ -1,7 +1,7 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { mcpRoutes } from '../src/mcp-server.js';
+import { mcpRoutes, VERIFICATION_TOKEN_REGEX } from '../src/mcp-server.js';
 import { createMcpClient, closeMcpClient, fetchToolDefs, runTool } from '../src/tools.js';
 
 expect(globalThis.window).toBe(undefined); // G6 guard — plain node environment, never jsdom
@@ -30,9 +30,9 @@ describe('fetchToolDefs', () => {
     expect(client).toBeTruthy();
   });
 
-  it('A4: returns at least 4 defs; every entry has type === "function"', async () => {
+  it('A4: returns at least 6 defs; every entry has type === "function"', async () => {
     const defs = await fetchToolDefs(client);
-    expect(defs.length).toBeGreaterThanOrEqual(4);
+    expect(defs.length >= 6).toBeTruthy();
     for (const d of defs) {
       expect(d.type).toBe('function');
     }
@@ -53,19 +53,22 @@ describe('fetchToolDefs', () => {
     expect(tool.parameters).toEqual({ type: 'object', properties: {} });
   });
 
-  it('A4: hello.parameters.properties.name matches; no required array', async () => {
+  it('A4: verify_identity.parameters.properties.name matches; no required array', async () => {
     const defs = await fetchToolDefs(client);
-    const tool = defs.find((d) => d.name === 'hello');
+    const tool = defs.find((d) => d.name === 'verify_identity');
     expect(tool).toBeTruthy();
     const parameters = tool.parameters as { properties: Record<string, unknown>; required?: unknown };
-    expect(parameters.properties['name']).toEqual({ type: 'string', description: 'Name to greet' });
+    expect(parameters.properties['name']).toEqual({
+      type: 'string',
+      description: "The caller's full name as spoken.",
+    });
     expect(parameters.required).toBe(undefined);
   });
 });
 
 describe('runTool', () => {
   it('bad args (zod validation failure) → resolves with isError message, does not reject', async () => {
-    const result = await runTool(client, 'hello', '{"name": 42}');
+    const result = await runTool(client, 'verify_identity', '{"name": 42}');
     const parsed = JSON.parse(result) as { error: string };
     expect(typeof parsed.error).toBe('string');
     expect(parsed.error.startsWith('MCP error -32602: Input validation error:'), parsed.error).toBeTruthy();
@@ -81,28 +84,36 @@ describe('runTool', () => {
     const result = await runTool(client, 'get_current_time', '');
     const parsed = JSON.parse(result) as { content: Array<{ text: string }>; error?: string };
     expect(parsed.error).toBe(undefined);
-    expect(parsed.content[0]!.text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
+    const payload = JSON.parse(parsed.content[0]!.text) as Record<string, unknown>;
+    expect(payload.utc as string).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(payload.timezone).toBe('America/Los_Angeles');
   });
 
   it('whitespace-only args guard → treated as {}, success JSON', async () => {
     const result = await runTool(client, 'get_current_time', '   ');
     const parsed = JSON.parse(result) as { content: Array<{ text: string }>; error?: string };
     expect(parsed.error).toBe(undefined);
-    expect(parsed.content[0]!.text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
+    const payload = JSON.parse(parsed.content[0]!.text) as Record<string, unknown>;
+    expect(payload.utc as string).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(payload.timezone).toBe('America/Los_Angeles');
   });
 
   it('"{}" args guard → treated as {}, success JSON', async () => {
     const result = await runTool(client, 'get_current_time', '{}');
     const parsed = JSON.parse(result) as { content: Array<{ text: string }>; error?: string };
     expect(parsed.error).toBe(undefined);
-    expect(parsed.content[0]!.text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
+    const payload = JSON.parse(parsed.content[0]!.text) as Record<string, unknown>;
+    expect(payload.utc as string).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(payload.timezone).toBe('America/Los_Angeles');
   });
 
-  it('valid args → success JSON, content[0].text === "Hello, Ada!"', async () => {
-    const result = await runTool(client, 'hello', '{"name":"Ada"}');
+  it('valid args → success JSON, verified true with a matching verification_token', async () => {
+    const result = await runTool(client, 'verify_identity', '{"name":"Ada"}');
     const parsed = JSON.parse(result) as { content: Array<{ text: string }>; error?: string };
     expect(parsed.error).toBe(undefined);
-    expect(parsed.content[0]!.text).toBe('Hello, Ada!');
+    const payload = JSON.parse(parsed.content[0]!.text) as Record<string, unknown>;
+    expect(payload.verified).toBe(true);
+    expect(payload.verification_token as string).toMatch(VERIFICATION_TOKEN_REGEX);
   });
 
   it('transport failure (server closed) → resolves (does not reject) with a non-empty error string', async () => {
@@ -116,7 +127,7 @@ describe('runTool', () => {
     const client2 = await createMcpClient(address2.port);
     await app2.close();
 
-    const result = await runTool(client2, 'hello', '{}');
+    const result = await runTool(client2, 'verify_identity', '{}');
     const parsed = JSON.parse(result) as { error: string };
     expect(typeof parsed.error).toBe('string');
     expect(parsed.error.length > 0).toBeTruthy();

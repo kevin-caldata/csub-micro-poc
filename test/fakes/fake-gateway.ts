@@ -356,7 +356,7 @@ function handleConnection(ws: WSClient, scenario: FakeGatewayScenario, received:
     });
   }
 
-  /** response-created → output-item-added → function-call-arguments-done('hello', Kevin) →
+  /** response-created → output-item-added → function-call-arguments-done('verify_identity', Kevin) →
    *  response-done{completed}. The client's `conversation-item-create` + gated single
    *  `response-create` follow-up is served by the `response-create` case above
    *  (findings/04 G7 — exactly one gated response-create is a TEST-side assertion over
@@ -372,7 +372,7 @@ function handleConnection(ws: WSClient, scenario: FakeGatewayScenario, received:
       responseId,
       itemId,
       callId: 'call_1',
-      name: 'hello',
+      name: 'verify_identity',
       arguments: '{"name":"Kevin"}',
       raw: {},
     });

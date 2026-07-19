@@ -421,3 +421,90 @@ describe('route_call', () => {
     expect(payload.live_transfer).toBe(false);
   });
 });
+
+describe('send_sms', () => {
+  it('A8: returns sent status with an SMS-SIM message id and echoes body_summary', async () => {
+    const res = await callTool('send_sms', { to_summary: 'MyID reset link' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(payload.status).toBe('sent');
+    expect(payload.message_id as string).toMatch(/^SMS-SIM-\d{6}$/);
+    expect(payload.body_summary).toBe('MyID reset link');
+    expect(payload.to).toBe('the number the caller is calling from');
+    expect(payload.note).toBe('Simulated — no real text message was sent. Tell the caller this if they ask.');
+    expect(Object.keys(payload)[0]).toBe('simulated');
+    expect(payload.simulated).toBe(true);
+  });
+
+  it('A11: two identical calls are byte-identical except message_id', async () => {
+    const res1 = await callTool('send_sms', { to_summary: 'MyID reset link' });
+    const payload1 = parsePayload((await res1.json()) as RpcCallResult);
+    const res2 = await callTool('send_sms', { to_summary: 'MyID reset link' });
+    const payload2 = parsePayload((await res2.json()) as RpcCallResult);
+    expect(payload1.message_id as string).toMatch(/^SMS-SIM-\d{6}$/);
+    expect(payload2.message_id as string).toMatch(/^SMS-SIM-\d{6}$/);
+    delete payload1.message_id;
+    delete payload2.message_id;
+    expect(payload1).toEqual(payload2);
+  });
+
+  it('R7 log: one static-tool line with tool send_sms and messageId', async () => {
+    let messageId: string | undefined;
+    const lines = await withCapturedOutputAsync(async () => {
+      const res = await callTool('send_sms', { to_summary: 'MyID reset link' });
+      const payload = parsePayload((await res.json()) as RpcCallResult);
+      messageId = payload.message_id as string;
+    });
+    expect(lines.length).toBe(1);
+    const parsed = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(parsed.event).toBe('static-tool');
+    expect(parsed.level).toBe('info');
+    expect(parsed.message).toBe('static tool served');
+    expect(parsed.tool).toBe('send_sms');
+    expect(parsed.messageId).toBe(messageId);
+  });
+});
+
+describe('get_current_time', () => {
+  it('A8: returns real campus (Pacific) time as JSON', async () => {
+    const res = await callTool('get_current_time', {});
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(payload.simulated).toBe(false);
+    expect(Object.keys(payload)[0]).toBe('simulated');
+    expect(payload.utc as string).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(payload.timezone).toBe('America/Los_Angeles');
+    expect(typeof payload.campus_time).toBe('string');
+    expect((payload.campus_time as string).length).toBeGreaterThan(0);
+    expect(payload.campus_time as string).toContain(',');
+  });
+
+  it('R8 log: one static-tool line with tool get_current_time', async () => {
+    const lines = await withCapturedOutputAsync(async () => {
+      await callTool('get_current_time', {});
+    });
+    expect(lines.length).toBe(1);
+    const parsed = JSON.parse(lines[0]!) as Record<string, unknown>;
+    expect(parsed.event).toBe('static-tool');
+    expect(parsed.level).toBe('info');
+    expect(parsed.message).toBe('static tool served');
+    expect(parsed.tool).toBe('get_current_time');
+  });
+});
+
+describe('static tool surface (six names, no hello)', () => {
+  it('D4: tools/list contains all six R1 names and excludes hello', async () => {
+    const res = await rpcPost({ jsonrpc: '2.0', id: 900, method: 'tools/list', params: {} });
+    const body = (await res.json()) as { result: { tools: Array<{ name: string }> } };
+    const names = body.result.tools.map((t) => t.name);
+    for (const name of [
+      'escalate_to_human',
+      'get_current_time',
+      'reset_password',
+      'route_call',
+      'send_sms',
+      'verify_identity',
+    ]) {
+      expect(names).toContain(name);
+    }
+    expect(names).not.toContain('hello');
+  });
+});
