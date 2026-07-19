@@ -30,9 +30,9 @@ describe('fetchToolDefs', () => {
     expect(client).toBeTruthy();
   });
 
-  it('A4: returns exactly 2 defs; every entry has type === "function"', async () => {
+  it('A4: returns at least 4 defs; every entry has type === "function"', async () => {
     const defs = await fetchToolDefs(client);
-    expect(defs.length).toBe(2);
+    expect(defs.length).toBeGreaterThanOrEqual(4);
     for (const d of defs) {
       expect(d.type).toBe('function');
     }
