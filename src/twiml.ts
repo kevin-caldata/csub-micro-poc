@@ -98,6 +98,13 @@ export function registerTwimlRoutes(app: FastifyInstance, config: AppConfig, dep
         message: 'invalid signature',
         event: 'twiml-bad-signature',
         callSid: params?.CallSid,
+        // M1 diagnostics (no secrets): distinguishes missing-header vs mismatched-HMAC,
+        // and shows exactly which URL string the HMAC was computed over.
+        hasSignature: !!signature,
+        sigLen: signature?.length,
+        urlChecked: url,
+        paramCount: params ? Object.keys(params).length : 0,
+        tokenLen: config.twilioAuthToken.length,
       });
       return reply.code(403).send('invalid signature');
     }
