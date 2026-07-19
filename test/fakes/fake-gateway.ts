@@ -25,7 +25,7 @@ export interface FakeGatewayScenario {
   /** Mid-VAD-turn-audio, emits `speech-started` and expects a `conversation-item-truncate`
    *  reply, acking via `custom` then `response-done {status:'cancelled'}` (R9 barge-in script). */
   bargeIn?: boolean;
-  /** Serves the greeting `response-create` as a scripted tool call (`hello`/Kevin) instead of
+  /** Serves the greeting `response-create` as a scripted tool call (`verify_identity`/Kevin) instead of
    *  plain audio, then a follow-up audio response once the client's gated `response-create`
    *  arrives (R9 tool-call script). */
   toolCall?: boolean;
@@ -356,7 +356,7 @@ function handleConnection(ws: WSClient, scenario: FakeGatewayScenario, received:
     });
   }
 
-  /** response-created → output-item-added → function-call-arguments-done('hello', Kevin) →
+  /** response-created → output-item-added → function-call-arguments-done('verify_identity', Kevin) →
    *  response-done{completed}. The client's `conversation-item-create` + gated single
    *  `response-create` follow-up is served by the `response-create` case above
    *  (findings/04 G7 — exactly one gated response-create is a TEST-side assertion over
@@ -372,7 +372,7 @@ function handleConnection(ws: WSClient, scenario: FakeGatewayScenario, received:
       responseId,
       itemId,
       callId: 'call_1',
-      name: 'hello',
+      name: 'verify_identity',
       arguments: '{"name":"Kevin"}',
       raw: {},
     });

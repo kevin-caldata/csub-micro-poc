@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { logEvent } from './logger.js';
 
 /** SIM-V- + 6 uppercase hex — verify_identity mints it, reset_password shape-validates it (Spec 02 R5/R6/R9). */
@@ -121,34 +121,44 @@ const ROUTE_FALLBACK: RouteEntry = {
 
 /** Fresh McpServer per request (stateless mode requires it — SDK throws on reuse). */
 export function buildMcpServer(): McpServer {
-  const server = new McpServer({ name: 'hello-world', version: '1.0.0' });
+  const server = new McpServer({ name: 'rio-demo', version: '1.0.0' });
 
   // Tool 1: no args → config has no inputSchema; handler signature is (extra) => ...
   server.registerTool(
     'get_current_time',
-    { description: 'Returns the current server time as ISO-8601 plus IANA timezone.' },
-    async () => ({
-      content: [
-        {
-          type: 'text' as const,
-          text: `${new Date().toISOString()} (${Intl.DateTimeFormat().resolvedOptions().timeZone})`,
-        },
-      ],
-    }),
+    {
+      description:
+        'Returns the real current date and time on the CSUB campus (Pacific Time), plus UTC. Use when: the caller asks the time, the date, or the day of the week. This is real data, not simulated.',
+    },
+    async () => {
+      const now = new Date();
+      const campusTime = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        dateStyle: 'full',
+        timeStyle: 'short',
+      }).format(now);
+      logEvent({
+        level: 'info',
+        message: 'static tool served',
+        event: 'static-tool',
+        tool: 'get_current_time',
+      });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              simulated: false,
+              utc: now.toISOString(),
+              campus_time: campusTime,
+              timezone: 'America/Los_Angeles',
+            }),
+          },
+        ],
+      };
+    },
   );
 
-  // Tool 2: zod RAW SHAPE (plain object of zod schemas — NOT z.object(...)).
-  // Handler's first arg is the parsed+typed args object.
-  server.registerTool(
-    'hello',
-    {
-      description: 'Say a friendly hello.',
-      inputSchema: { name: z.string().optional().describe('Name to greet') },
-    },
-    async ({ name }) => ({
-      content: [{ type: 'text' as const, text: `Hello, ${name ?? 'world'}!` }],
-    }),
-  );
   // Tool 3: verify_identity — pure theater, mints the SIM-V- verification token (Spec 02 R5).
   server.registerTool(
     'verify_identity',
@@ -383,6 +393,46 @@ export function buildMcpServer(): McpServer {
               estimated_wait_minutes: entry.estimatedWaitMinutes,
               context_note: contextNote,
               handoff_blurb: `I'm connecting you to ${entry.department} at ${entry.phone}. I've passed along a note so you won't have to repeat yourself: ${contextNote} Estimated wait is about ${entry.estimatedWaitMinutes} minutes.`,
+            }),
+          },
+        ],
+      };
+    },
+  );
+  // Tool 7: send_sms — fake send, confirmation id (Spec 02 R7).
+  server.registerTool(
+    'send_sms',
+    {
+      description:
+        "Simulated follow-up text message to the number the caller is calling from. Use when: the caller wants links, hours, or steps sent by text so they don't have to write them down. Pass a one-sentence summary of what the message should contain. No real SMS is ever sent.",
+      inputSchema: {
+        to_summary: z
+          .string()
+          .describe(
+            "One sentence describing what the text should contain, e.g. 'the MyID reset link and ITS Service Center summer hours'.",
+          ),
+      },
+    },
+    async ({ to_summary }) => {
+      const messageId = `SMS-SIM-${String(randomInt(0, 1000000)).padStart(6, '0')}`;
+      logEvent({
+        level: 'info',
+        message: 'static tool served',
+        event: 'static-tool',
+        tool: 'send_sms',
+        messageId,
+      });
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              simulated: true,
+              status: 'sent',
+              message_id: messageId,
+              to: 'the number the caller is calling from',
+              body_summary: to_summary,
+              note: 'Simulated — no real text message was sent. Tell the caller this if they ask.',
             }),
           },
         ],

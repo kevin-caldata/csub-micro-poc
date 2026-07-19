@@ -30,31 +30,35 @@ function rpcPost(body: unknown, headers: Record<string, string> = jsonHeaders): 
 }
 
 describe('mcpRoutes — POST /mcp', () => {
-  it('A1: tools/list returns 200 application/json and contains the registered tool surface', async () => {
+  it('A1: tools/list returns 200 application/json and contains the six-tool surface, no hello', async () => {
     const res = await rpcPost({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
     expect(res.status).toBe(200);
     expect(String(res.headers.get('content-type'))).toMatch(/^application\/json/);
 
     const body = (await res.json()) as { result: { tools: Array<{ name: string }> } };
     const names = body.result.tools.map((t) => t.name).sort();
-    for (const name of ['get_current_time', 'hello', 'reset_password', 'verify_identity']) {
+    for (const name of ['escalate_to_human', 'get_current_time', 'reset_password', 'route_call', 'send_sms', 'verify_identity']) {
       expect(names).toContain(name);
     }
+    expect(names).not.toContain('hello');
   });
 
-  it('tools/call hello with a name greets that name', async () => {
+  it('tools/call verify_identity with a name verifies that name', async () => {
     const res = await rpcPost({
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/call',
-      params: { name: 'hello', arguments: { name: 'Ada' } },
+      params: { name: 'verify_identity', arguments: { name: 'Ada' } },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { result: { content: Array<{ type: string; text: string }> } };
-    expect(body.result.content[0]!.text).toBe('Hello, Ada!');
+    const payload = JSON.parse(body.result.content[0]!.text) as Record<string, unknown>;
+    expect(payload.verified).toBe(true);
+    const student = payload.student as Record<string, unknown>;
+    expect(student.name).toBe('Ada');
   });
 
-  it('tools/call get_current_time returns an ISO-8601 timestamp with an IANA timezone suffix', async () => {
+  it('tools/call get_current_time returns campus-time JSON with utc and timezone', async () => {
     const res = await rpcPost({
       jsonrpc: '2.0',
       id: 3,
@@ -63,7 +67,9 @@ describe('mcpRoutes — POST /mcp', () => {
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { result: { content: Array<{ type: string; text: string }> } };
-    expect(body.result.content[0]!.text).toMatch(/^\d{4}-\d{2}-\d{2}T.*\(.+\)$/);
+    const payload = JSON.parse(body.result.content[0]!.text) as Record<string, unknown>;
+    expect(payload.utc as string).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(payload.timezone).toBe('America/Los_Angeles');
   });
 
   it('A2: sequential then concurrent POSTs all succeed; no stateless-transport-reuse error ever surfaces', async () => {

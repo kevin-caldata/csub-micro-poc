@@ -22,6 +22,7 @@ import { buildApp } from '../src/server.js';
 import { loadConfig, type AppConfig } from '../src/config.js';
 import type { MintFn } from '../src/twiml.js';
 import { createMcpClient, closeMcpClient, fetchToolDefs } from '../src/tools.js';
+import { VERIFICATION_TOKEN_REGEX } from '../src/mcp-server.js';
 import { startFakeGateway, type FakeGatewayHandle, type FakeGatewayScenario } from './fakes/fake-gateway.js';
 import { runFakeCall, type CallCapture, type CallScript } from './fakes/fake-twilio.js';
 
@@ -363,10 +364,14 @@ describe('harness — tool-call scenario (R12 f)', () => {
 
     const itemCreate = h.fakeGw.received[itemCreateIdx] as { item: Record<string, unknown> };
     expect(itemCreate.item.type).toBe('function-call-output');
-    expect(itemCreate.item.name).toBe('hello');
-    // Real MCP round trip (not a stub): src/mcp-server.ts's `hello` tool returns this exact text.
+    expect(itemCreate.item.name).toBe('verify_identity');
+    // Real MCP round trip (not a stub): src/mcp-server.ts's `verify_identity` tool returns this JSON.
     const output = JSON.parse(itemCreate.item.output as string) as { content: Array<{ text: string }> };
-    expect(output.content[0]!.text).toBe('Hello, Kevin!');
+    const payload = JSON.parse(output.content[0]!.text) as Record<string, unknown>;
+    expect(payload.verified).toBe(true);
+    const student = payload.student as Record<string, unknown>;
+    expect(student.name).toBe('Kevin');
+    expect(payload.verification_token as string).toMatch(VERIFICATION_TOKEN_REGEX);
 
     const responseCreatesAfter = h.fakeGw.received
       .slice(itemCreateIdx + 1)
