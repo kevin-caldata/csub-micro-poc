@@ -14,7 +14,7 @@ describe('loadConfig — Spec 04 R2 gateway keys', () => {
     expect(c.vadSilenceMs).toBe(500);
     expect(c.vadThreshold).toBe(0.5);
     expect(c.vadPrefixPaddingMs).toBe(300);
-    expect(c.tokenTtlSeconds).toBe(600);
+    expect(c.tokenTtlSeconds).toBe(300); // S15: gateway max is 300 (answered at M1)
     expect(c.gatewayHandshakeTimeoutMs).toBe(5000);
     expect(c.gatewayPingSeconds).toBe(0);
     expect(c.waitForSessionUpdated).toBe(false);

@@ -19,7 +19,10 @@ const EnvSchema = z.object({
   VAD_SILENCE_MS: z.coerce.number().int().default(500),
   VAD_THRESHOLD: z.coerce.number().min(0).max(1).default(0.5),
   VAD_PREFIX_PADDING_MS: z.coerce.number().int().default(300),
-  TOKEN_TTL_SECONDS: z.coerce.number().int().default(600),
+  // S15 ANSWERED (M1, 2026-07-19): gateway rejects expiresIn > 300 with 400
+  // "Invalid request body: expiresIn: Too big: expected number to be <=300".
+  // BRD §5.2's expiresAfterSeconds: 600 is wrong for realtime; 300 is the max.
+  TOKEN_TTL_SECONDS: z.coerce.number().int().max(300).default(300),
   GATEWAY_HANDSHAKE_TIMEOUT_MS: z.coerce.number().int().default(5000),
   GATEWAY_PING_SECONDS: z.coerce.number().int().default(0),
   WAIT_FOR_SESSION_UPDATED: z.enum(['true', 'false']).default('false').transform(v => v === 'true'),
