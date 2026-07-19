@@ -3,6 +3,7 @@ import { loadConfig } from '../src/config.js';
 import {
   openGatewayLeg,
   isBenignGatewayError,
+  isCreateWhileActiveError,
   BENIGN_ERROR_CODES,
   type MintResult,
   type GatewayLegCallbacks,
@@ -110,6 +111,40 @@ describe('isBenignGatewayError (A9, R10 heuristic)', () => {
     } finally {
       BENIGN_ERROR_CODES.delete('test_only_code');
     }
+  });
+
+  // Findings review (Important — R12 lost-race classification): the create-while-active shape
+  // Spec 07 R12's deferred-retry ToolLoop gate is designed to survive previously matched NONE of
+  // the four classes above, so a lost gate race classified as non-benign and session.ts tore the
+  // call down mid-tool-answer instead of letting the retry engage.
+  it('matches the create-while-active substring class ("already has an active response")', () => {
+    expect(
+      isBenignGatewayError({
+        type: 'error',
+        message: 'Conversation already has an active response',
+        raw: {},
+      }),
+    ).toBe(true);
+    // Case-insensitive, and the exact real-world phrasing this class targets.
+    expect(
+      isBenignGatewayError({
+        type: 'error',
+        message: 'conversation_already_has_active_response: this conversation ALREADY HAS AN ACTIVE RESPONSE',
+        raw: {},
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('isCreateWhileActiveError (Spec 07 R12 lost-race recovery narrow predicate)', () => {
+  it('matches only the create-while-active shape, not the other benign classes', () => {
+    expect(
+      isCreateWhileActiveError({ type: 'error', message: 'Conversation already has an active response', raw: {} }),
+    ).toBe(true);
+    expect(isCreateWhileActiveError({ type: 'error', message: 'No active response to cancel', raw: {} })).toBe(false);
+    expect(isCreateWhileActiveError({ type: 'error', message: 'audio_end_ms is out of range', raw: {} })).toBe(false);
+    expect(isCreateWhileActiveError({ type: 'error', message: 'failed to truncate conversation item', raw: {} })).toBe(false);
+    expect(isCreateWhileActiveError({ type: 'error', message: 'boom-unknown', raw: {} })).toBe(false);
   });
 });
 

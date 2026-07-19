@@ -129,9 +129,15 @@ export const BENIGN_ERROR_CODES = new Set<string>([]);
  * Classifies an in-band `error` event as benign (Spec 04 R10, verbatim heuristic). Never used
  * to close the socket — policy is that NO in-band `error` event ever tears down the call from
  * this module (R11's `close` event is the sole FR-7 termination signal). Two paths to `true`:
- * (1) `ev.code` is a pinned member of `BENIGN_ERROR_CODES` (empty until S11), or (2) one of four
- * documented-benign message-substring classes [findings/04 V4, G3, G6]: cancel-with-no-active-
- * response, truncate-out-of-range, or an `audio_end_ms` complaint.
+ * (1) `ev.code` is a pinned member of `BENIGN_ERROR_CODES` (empty until S11), or (2) one of five
+ * documented-benign message-substring classes [findings/04 V4, G3, G6; findings/04 §create-while-
+ * active + Spec 07 R12]: cancel-with-no-active-response, truncate-out-of-range, an
+ * `audio_end_ms` complaint, or a lost-race create-while-active complaint ("already has an active
+ * response") — the exact shape Spec 07 R12's deferred-retry ToolLoop gate is designed to survive
+ * when its own `response-create` loses a race against a VAD-auto response (findings review: this
+ * substring previously matched none of the classes above, so a lost gate race classified as
+ * non-benign and `session.ts` tore the call down mid-tool-answer instead of letting the deferred
+ * retry engage).
  */
 export function isBenignGatewayError(ev: Extract<ServerEvent, { type: 'error' }>): boolean {
   if (ev.code && BENIGN_ERROR_CODES.has(ev.code)) return true;
@@ -140,8 +146,21 @@ export function isBenignGatewayError(ev: Extract<ServerEvent, { type: 'error' }>
     m.includes('no active response') ||
     (m.includes('cancel') && m.includes('response')) ||
     m.includes('audio_end_ms') ||
-    m.includes('truncat')
+    m.includes('truncat') ||
+    m.includes('already has an active response')
   );
+}
+
+/**
+ * Narrow subclass check for the create-while-active substring specifically — Spec 07 R12's
+ * lost-race recovery (`ToolLoop.onBenignCreateWhileActiveError`) must engage ONLY for this exact
+ * benign shape, never for the other benign classes above (which have nothing to do with the
+ * tool-loop gate). Kept as its own exported predicate rather than re-deriving the substring in
+ * `session.ts` so there is exactly one place that string lives.
+ */
+export function isCreateWhileActiveError(ev: Extract<ServerEvent, { type: 'error' }>): boolean {
+  const m = ev.message?.toLowerCase() ?? '';
+  return m.includes('already has an active response');
 }
 
 /**

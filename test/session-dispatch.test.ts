@@ -9,7 +9,23 @@ import { dispatch, handleTwilioMedia } from '../src/session.js';
 import { onMarkEcho } from '../src/bargein.js';
 import { createSession, type Session } from '../src/sessions.js';
 import { TurnRecorder } from '../src/latency.js';
+import { ToolLoop } from '../src/tools.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Experimental_RealtimeModelV4ClientEvent as ClientEvent } from '@ai-sdk/provider';
+
+/** Flushes pending microtasks/macrotasks queued by ToolLoop's async continuations (same helper
+ *  shape as test/tool-loop.test.ts's own `flush`). */
+function flush(times = 6): Promise<void> {
+  return times <= 0
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => setImmediate(() => flush(times - 1).then(resolve)));
+}
+
+/** A fake MCP `Client` whose `callTool` always succeeds with a text result (mirrors
+ *  test/tool-loop.test.ts's `fakeClient`). */
+function fakeMcpClient(): Client {
+  return { callTool: async () => ({ content: [{ type: 'text', text: 'ok' }] }) } as unknown as Client;
+}
 
 const OPEN = 1;
 const CLOSING = 2;
@@ -410,6 +426,72 @@ describe('dispatch — error policy (Spec 05 R9)', () => {
     expect(line!.level).toBe('error');
     expect(JSON.parse(line!.fields?.raw as string)).toEqual({ b: 2 });
     expect(teardownCalls).toEqual(['gateway-error']);
+  });
+});
+
+// Findings review (Important — R12 lost-race is call-fatal): before this fix, a create-while-
+// active error had zero production callers reaching ToolLoop.onBenignCreateWhileActiveError, and
+// the error text matched none of gateway.ts's benign classes — so a lost R12 gate race classified
+// as non-benign and tore the call down mid-tool-answer. This test wires a REAL ToolLoop into a
+// REAL Session (through dispatch() itself, the same call sites startSessionBridge uses) and
+// scripts exactly that lost race end to end: the gate's own response-create collides with an
+// auto-spawned response, the gateway reports it back as a create-while-active error, and the
+// deferred retry must be the thing that recovers — never a teardown.
+describe('dispatch — error policy engages ToolLoop deferred retry for the create-while-active benign class (Spec 07 R12)', () => {
+  it('warns (never tears down) and the deferred retry fires exactly one eventual response-create', async () => {
+    const { s, logs } = makeSession();
+    let tornDownCalls = 0;
+    s.teardown = () => {
+      tornDownCalls += 1;
+    };
+
+    const sent: ClientEvent[] = [];
+    s.toolLoop = new ToolLoop({
+      client: fakeMcpClient(),
+      gwSend: async (ev) => {
+        sent.push(ev);
+      },
+      isResponseActive: () => s.responseActive,
+      log: (f) => logs.push({ level: f.level, message: f.message, fields: f as unknown as Record<string, unknown> }),
+    });
+
+    // Tool call arrives on response r1; the tool resolves and its output is sent.
+    dispatch(s, { type: 'function-call-arguments-done', responseId: 'r1', itemId: 'i1', callId: 'c1', name: 'get_current_time', arguments: '{}' });
+    await flush();
+
+    // r1 completes: the double gate is now fully satisfied and isResponseActive() reads false
+    // (session.responseActive was set false by this same response-done, per dispatch's own R8
+    // ordering) — so the ToolLoop fires its OWN response-create. This is the lost race: the
+    // gateway, from its own vantage point, already has a VAD-auto response in flight that the
+    // Session hasn't been told about yet.
+    dispatch(s, { type: 'response-done', responseId: 'r1', status: 'completed' });
+    await flush();
+    expect(sent.filter((e) => e.type === 'response-create').length, 'the raced attempt').toBe(1);
+
+    // The gateway reports the lost race back as an in-band error — the exact benign shape this
+    // fix adds to gateway.ts's whitelist.
+    dispatch(s, { type: 'error', message: 'Conversation already has an active response', raw: {} });
+
+    const errorLine = logs.find((l) => l.fields?.event === 'error');
+    expect(errorLine, 'expected an error-event log line').toBeTruthy();
+    expect(errorLine!.level, 'benign -> warn, never error').toBe('warn');
+    expect(tornDownCalls, 'the call must survive a lost R12 gate race').toBe(0);
+
+    // The auto-spawned response (the one that won the race) plays out and finishes.
+    dispatch(s, { type: 'response-created', responseId: 'auto1', raw: {} });
+    dispatch(s, { type: 'response-done', responseId: 'auto1', status: 'completed' });
+    await flush();
+
+    // The deferred retry: exactly one MORE response-create beyond the original raced attempt.
+    const responseCreates = sent.filter((e) => e.type === 'response-create');
+    expect(responseCreates.length, 'exactly one eventual retried response-create').toBe(2);
+
+    // The real follow-up response arrives and its first delta closes the tool-call cycle.
+    dispatch(s, { type: 'response-created', responseId: 'follow1', raw: {} });
+    dispatch(s, { type: 'audio-delta', responseId: 'follow1', itemId: 'itemF', delta: 'd', raw: {} });
+
+    const toolCallLines = logs.filter((l) => l.fields?.event === 'tool-call');
+    expect(toolCallLines.length, 'exactly one tool-call line for the eventual follow-up').toBe(1);
   });
 });
 
