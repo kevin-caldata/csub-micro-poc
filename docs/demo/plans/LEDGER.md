@@ -40,8 +40,8 @@ Never delete rows. Never re-order. Append-only in Deviations.
 |---|---|---|---|---|---|
 | DA1 | 04-corpus/01-corpus-file-and-loader.md | — | OK | 212feae | review NEEDS_FIXES→fixed (fabricated §9 sentence removed + 6 en-dash ranges, ffc1382); post-merge CRLF break → .gitattributes LF pin (e31daef); corpus 33,450 B; 7/7 + allowlist zero violations |
 | DA2.1 | 02-static-tools/01-identity-flow-tools.md | — | OK | 5130f61 | review APPROVED; 368/368 + typecheck clean; Minor (final-review triage): reset_password description quoting style inconsistent with sibling |
-| DA2.2 | 02-static-tools/02-routing-and-escalation-tools.md | DA2.1 (dispatch with README N4 read-down) | D | | |
-| DA2.3 | 02-static-tools/03-sms-time-and-hello-removal.md | DA2.1, DA2.2 | - | | |
+| DA2.2 | 02-static-tools/02-routing-and-escalation-tools.md | DA2.1 (dispatch with README N4 read-down) | OK | 317ad87 | review APPROVED; 387/387 in lane, 31/31 static-tools on main; G3/PD-03 spot check PASSED all 4 numbers byte-identical mcp-server vs corpus |
+| DA2.3 | 02-static-tools/03-sms-time-and-hello-removal.md | DA2.1, DA2.2 | D | | |
 | DA3 | 05-performance/01-aggregator-knowledge-extension.md | — | OK | 915bb1d | review NEEDS_FIXES→fixed (EXPERIMENTS.md intro R3 72h sentence, 7592cde); D2 grep gate 0; smoke outputs byte-matched |
 
 **Merge point M-A** (all five rows OK + merged): full `npx vitest run` green (KF-1 rule below); record actual count in Current state; run the deferred G3 crisis-number spot check `src/mcp-server.ts` vs `assets/csub-corpus.md` if DA2.2's report flagged it (PD-03). File sets disjoint — no manual merge. DA2.* landed against the zero-arg `buildMcpServer()` (D3).
