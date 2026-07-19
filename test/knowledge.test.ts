@@ -79,7 +79,7 @@ describe('askCampusKnowledge — unit (injected fakes, no network)', () => {
     expect(received!.system).toContain(FIXTURE_CORPUS);
     expect(received!.system.endsWith('</documents>')).toBe(true);
     expect(received!.prompt).toBe(`Question: ${question}`);
-    expect(received!.maxOutputTokens).toBe(150);
+    expect(received!.maxOutputTokens).toBe(400);
     expect(received!.abortSignal instanceof AbortSignal).toBe(true);
   });
 
