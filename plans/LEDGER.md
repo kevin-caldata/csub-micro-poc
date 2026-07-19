@@ -9,10 +9,12 @@ Companion protocol: `plans/README.md`. Wave structure: master plan `docs/specs/0
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: COMPLETE (offline) — awaiting human for M1-M5 live execution
-- Last updated: 2026-07-18
-- Next dispatchable tasks: NONE agent-executable. Next step: human walks docs/M1-M5-EXECUTION-CHECKLIST.md (M1 first: Twilio console S20, GitHub remote + Railway project, sealed vars, first live call)
-- Open blockers: human required (phone, Twilio console, Railway dashboard, real API keys)
+- Wave: M1 LIVE — first successful end-to-end call achieved 2026-07-19 on +1 (661) 490-9364 (Railway, commit 7ee7ffe, gpt-realtime-2.1, transcode)
+- Last updated: 2026-07-19
+- Answered spikes recorded: S7, S15 (TTL max 300 s → config fix 7ee7ffe), S20 (trial harness sends unsigned webhooks — real number required), S21
+- Next: M1 remaining spikes (S1 pcmu flip, S4/S5/S6, S8 marin, S11–S14, S23 kill test) per docs/M1-M5-EXECUTION-CHECKLIST.md; then M2. Extract logs to docs/measurements/ within 72 h
+- New thread: RIO demo-impact analysis (thought exercise) → docs/findings/11–14 + docs/demo/RIO-DEMO-CONCEPT.md
+- Open blockers: human required for live calls
 - Notes: BUILD OFFLINE-COMPLETE. 356/356 vitest, typecheck+build clean. Final whole-branch review (most capable model): READY FOR M1 confirmed after fix wave (2362aae/e2b265f/fa9b8d5/f1a0db2/53a99f4 — teardown race closed, create-while-active benign+retry wired, clip path cwd-safe, LOG_LEVEL fail-closed, GATEWAY_WS_URL prod guard). M1 watch items: count gateway-array-frame + custom-event log lines (budget), capture gateway-error-event code+raw (S11), session-updated .raw (S1/S8), gateway-open/close pairing + credit deltas after kill tests. Accepted Minors logged in review output. Reviewer's top-3 first-call risks recorded in final-review transcript + checklist
 
 ---
@@ -143,7 +145,7 @@ Fill Answer during M1/M4/M5 execution (T10.8). Owner = instrumenting task per ma
 | S4 | speech-started arrives normalized vs custom? | T04 | M1 | |
 | S5 | `.raw` event shapes (record `session-updated.raw`) | T04 | M1 | |
 | S6 | session-update ordering / `WAIT_FOR_SESSION_UPDATED` needed? | T04 | M1 | |
-| S7 | `gpt-realtime-2.1` connects via gateway? | T04/T01 | M1 | |
+| S7 | `gpt-realtime-2.1` connects via gateway? | T04/T01 | M1 | YES (2026-07-19): mints fine despite missing websocket-realtime tag on the model page; local probe returned `vcst_` token for `openai/gpt-realtime-2.1` in ~124–340 ms |
 | S8 | `VOICE=marin` accepted? | T04/T01 | M1 | |
 | S9 | truncate forwarded + `conversation.item.truncated` ack? | T04/T05 | M2 | |
 | S10 | `providerOptions` passthrough (probe only if needed) | T04 | conditional | |
@@ -151,13 +153,13 @@ Fill Answer during M1/M4/M5 execution (T10.8). Owner = instrumenting task per ma
 | S12 | `response-done.status` value vocabulary | T04/T05/T07 | M1/M2 | |
 | S13 | Array frames observed in practice? | T04 | M1+ | |
 | S14 | Gateway WS close-code vocabulary | T04 | M1+ | |
-| S15 | Token TTL semantics + `getTokenMs` distribution | T02/T04 | M1 | |
+| S15 | Token TTL semantics + `getTokenMs` distribution | T02/T04 | M1 | ANSWERED (2026-07-19): realtime mint max `expiresIn` is 300 s — >300 → 400 invalid_request_error "Too big: expected number to be <=300" (BRD §5.2's 600 was wrong). Config default now 300 with `.max(300)` (commit 7ee7ffe). Probe `getTokenMs` 73–340 ms |
 | S16 | response-created always before first delta? | T08 | M1 | |
 | S17 | Audio-delta cadence (mark granularity) | T03/T08 | M1 | |
 | S18 | VAD behavior 8k μ-law vs 24k PCM | T06 | opportunistic | |
 | S19 | Caller experience on handshake failure / mid-call drop | T02/T03 | M1 kill test | |
-| S20 | Twilio account upgraded + Business Profile? (human console) | T09 | pre-M1 | |
-| S21 | Upgrade-signature header present on WS upgrade? | T03 | M1 | |
+| S20 | Twilio account upgraded + Business Profile? (human console) | T09 | pre-M1 | DONE (2026-07-19): account upgraded, real number +1 (661) 490-9364 purchased and webhook-configured. Note: the trial "Try out Voice" harness sends UNSIGNED webhooks (Java-http-client UA) — incompatible with the signature gate; a real number was required |
+| S21 | Upgrade-signature header present on WS upgrade? | T03 | M1 | YES (2026-07-19): X-Twilio-Signature observed on the WS upgrade request in Railway logs during first live calls |
 | S22 | Twilio inbound frame cadence / timeout | T03 | M1 | |
 | S23 | Canned clip plays before WS close? (gates G4 wiring) | T09/T03/T04 | M1 probe | |
 | S24 | Gateway concurrency limit + rejection locus (mint vs WS-open) | T10/T02/T04 | M4 | |
