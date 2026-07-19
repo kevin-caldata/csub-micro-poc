@@ -3,6 +3,13 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { mcpRoutes, VERIFICATION_TOKEN_REGEX } from '../src/mcp-server.js';
 import { createMcpClient, closeMcpClient, fetchToolDefs, runTool } from '../src/tools.js';
+import { loadConfig } from '../src/config.js';
+
+const BASE = {
+  AI_GATEWAY_API_KEY: 'vck_test',
+  TWILIO_AUTH_TOKEN: 'tok_test',
+  PUBLIC_HOST: 'example.ngrok.app',
+};
 
 expect(globalThis.window).toBe(undefined); // G6 guard — plain node environment, never jsdom
 
@@ -11,7 +18,7 @@ let client: Client;
 
 beforeAll(async () => {
   app = Fastify({ logger: false });
-  await mcpRoutes(app);
+  await mcpRoutes(app, loadConfig({ ...BASE }));
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
   if (address === null || typeof address === 'string') {
@@ -118,7 +125,7 @@ describe('runTool', () => {
 
   it('transport failure (server closed) → resolves (does not reject) with a non-empty error string', async () => {
     const app2 = Fastify({ logger: false });
-    await mcpRoutes(app2);
+    await mcpRoutes(app2, loadConfig({ ...BASE }));
     await app2.listen({ port: 0, host: '127.0.0.1' });
     const address2 = app2.server.address();
     if (address2 === null || typeof address2 === 'string') {

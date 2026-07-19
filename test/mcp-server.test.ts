@@ -1,13 +1,20 @@
 import { describe, it, beforeAll, afterAll, expect } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { mcpRoutes } from '../src/mcp-server.js';
+import { loadConfig } from '../src/config.js';
+
+const BASE = {
+  AI_GATEWAY_API_KEY: 'vck_test',
+  TWILIO_AUTH_TOKEN: 'tok_test',
+  PUBLIC_HOST: 'example.ngrok.app',
+};
 
 let app: FastifyInstance;
 let base: string;
 
 beforeAll(async () => {
   app = Fastify({ logger: false });
-  await mcpRoutes(app);
+  await mcpRoutes(app, loadConfig({ ...BASE }));
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
   if (address === null || typeof address === 'string') {

@@ -72,7 +72,7 @@ export async function buildApp(
     onSessionStart: (session, pendingCall) => startSessionBridge(session, pendingCall, { config }),
   });
   // Spec 07 adds: mcpRoutes(app)                  — POST /mcp (+ 405 GET/DELETE)
-  await mcpRoutes(app);
+  await mcpRoutes(app, config);
   // -----------------------------------------
 
   // Spec 02 R8 — SIGTERM graceful shutdown: drain FIRST, then close (ordering is load-bearing).

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import Fastify from 'fastify';
 import { loadConfig } from '../src/config.js';
 import type { LogFields } from '../src/logger.js';
 import {
@@ -8,6 +9,7 @@ import {
   NOT_FOUND_SPOKEN,
   KNOWLEDGE_ERROR_SPOKEN,
   KNOWLEDGE_ENVELOPE_SCHEMA,
+  KNOWLEDGE_TOPICS,
   type KnowledgeGenerateFn,
 } from '../src/knowledge.js';
 
@@ -291,5 +293,116 @@ describe('makeGatewayGenerate (mocked ai / @ai-sdk/gateway — no network, A10)'
     const { makeGatewayGenerate } = await import('../src/knowledge.js');
     makeGatewayGenerate(cfg);
     expect(createGatewayMock).toHaveBeenCalledWith({ apiKey: cfg.aiGatewayApiKey });
+  });
+});
+
+describe('ask_campus_knowledge — registered tool, end-to-end via mcpRoutes + runTool', () => {
+  it('D4: tools/list returns exactly the seven frozen tool names', async () => {
+    const { mcpRoutes } = await import('../src/mcp-server.js');
+    const { createMcpClient, closeMcpClient, fetchToolDefs } = await import('../src/tools.js');
+    const app2 = Fastify({ logger: false });
+    const fake: KnowledgeGenerateFn = async () => ({ object: { status: 'ok', response_text: 'x' } });
+    await mcpRoutes(app2, cfg, { knowledgeGenerate: fake });
+    await app2.listen({ port: 0, host: '127.0.0.1' });
+    const address = app2.server.address();
+    if (address === null || typeof address === 'string') throw new Error('expected a bound TCP address');
+    const client = await createMcpClient(address.port);
+
+    const defs = await fetchToolDefs(client);
+    const names = defs.map((d) => d.name).sort();
+    expect(names).toEqual(
+      [
+        'ask_campus_knowledge',
+        'escalate_to_human',
+        'get_current_time',
+        'reset_password',
+        'route_call',
+        'send_sms',
+        'verify_identity',
+      ].sort(),
+    );
+
+    await closeMcpClient(client);
+    await app2.close();
+  });
+
+  it('A9: ask_campus_knowledge tool definition shape', async () => {
+    const { mcpRoutes } = await import('../src/mcp-server.js');
+    const { createMcpClient, closeMcpClient, fetchToolDefs } = await import('../src/tools.js');
+    const app2 = Fastify({ logger: false });
+    const fake: KnowledgeGenerateFn = async () => ({ object: { status: 'ok', response_text: 'x' } });
+    await mcpRoutes(app2, cfg, { knowledgeGenerate: fake });
+    await app2.listen({ port: 0, host: '127.0.0.1' });
+    const address = app2.server.address();
+    if (address === null || typeof address === 'string') throw new Error('expected a bound TCP address');
+    const client = await createMcpClient(address.port);
+
+    const defs = await fetchToolDefs(client);
+    const def = defs.find((d) => d.name === 'ask_campus_knowledge');
+    expect(def).toBeTruthy();
+    const params = def!.parameters as {
+      properties: Record<string, { type?: string; enum?: string[] }>;
+      required?: string[];
+    };
+    expect(params.properties.question!.type).toBe('string');
+    expect(params.required).toContain('question');
+    expect(params.required).not.toContain('topic');
+    expect(params.properties.topic!.enum).toEqual([...KNOWLEDGE_TOPICS]);
+    expect(JSON.stringify(def)).not.toContain('$schema');
+
+    await closeMcpClient(client);
+    await app2.close();
+  });
+
+  it('A5 end-to-end: real CSUB_CORPUS flows through registration; envelope round-trips via runTool', async () => {
+    const { mcpRoutes } = await import('../src/mcp-server.js');
+    const { createMcpClient, closeMcpClient, runTool } = await import('../src/tools.js');
+    const app2 = Fastify({ logger: false });
+    let receivedSystem = '';
+    const fake: KnowledgeGenerateFn = async ({ system }) => {
+      receivedSystem = system;
+      return { object: { status: 'ok', response_text: 'The Runner Rundown fee is $150 for freshmen.' } };
+    };
+    await mcpRoutes(app2, cfg, { knowledgeGenerate: fake });
+    await app2.listen({ port: 0, host: '127.0.0.1' });
+    const address = app2.server.address();
+    if (address === null || typeof address === 'string') throw new Error('expected a bound TCP address');
+    const client = await createMcpClient(address.port);
+
+    const result = await runTool(
+      client,
+      'ask_campus_knowledge',
+      JSON.stringify({ question: 'How much is the Runner Rundown fee?' }),
+    );
+    const parsed = JSON.parse(result) as { error?: string; content: Array<{ text: string }> };
+    expect(parsed.error).toBe(undefined);
+    const envelope = JSON.parse(parsed.content[0]!.text);
+    expect(envelope).toEqual({ status: 'ok', response_text: 'The Runner Rundown fee is $150 for freshmen.' });
+    expect(receivedSystem).toContain('# CSUB CAMPUS KNOWLEDGE — SIMULATED DEMO DATA');
+
+    await closeMcpClient(client);
+    await app2.close();
+  });
+
+  it('A7(c): rejecting fake surfaces as {error} whose value contains status":"error — the apology-path shape', async () => {
+    const { mcpRoutes } = await import('../src/mcp-server.js');
+    const { createMcpClient, closeMcpClient, runTool } = await import('../src/tools.js');
+    const app3 = Fastify({ logger: false });
+    const fake: KnowledgeGenerateFn = async () => {
+      throw new Error('boom');
+    };
+    await mcpRoutes(app3, cfg, { knowledgeGenerate: fake });
+    await app3.listen({ port: 0, host: '127.0.0.1' });
+    const address = app3.server.address();
+    if (address === null || typeof address === 'string') throw new Error('expected a bound TCP address');
+    const client = await createMcpClient(address.port);
+
+    const result = await runTool(client, 'ask_campus_knowledge', JSON.stringify({ question: 'q' }));
+    const parsed = JSON.parse(result) as { error: string };
+    expect(typeof parsed.error).toBe('string');
+    expect(parsed.error).toContain('status":"error');
+
+    await closeMcpClient(client);
+    await app3.close();
   });
 });
