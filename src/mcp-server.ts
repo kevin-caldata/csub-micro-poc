@@ -4,6 +4,11 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { randomBytes, randomInt } from 'node:crypto';
 import { logEvent } from './logger.js';
+import type { AppConfig } from './config.js';
+import { CSUB_CORPUS } from './corpus.js';
+import { KNOWLEDGE_TOPICS, askCampusKnowledge, makeGatewayGenerate, type KnowledgeGenerateFn } from './knowledge.js';
+
+const CORPUS = CSUB_CORPUS; // master plan D1 — local alias, Spec 03's snippets say CORPUS
 
 /** SIM-V- + 6 uppercase hex — verify_identity mints it, reset_password shape-validates it (Spec 02 R5/R6/R9). */
 export const VERIFICATION_TOKEN_REGEX = /^SIM-V-[0-9A-F]{6}$/;
@@ -119,8 +124,13 @@ const ROUTE_FALLBACK: RouteEntry = {
   estimatedWaitMinutes: 1,
 };
 
+/** Test seam (Spec 03 R6/R11): replaces the real gateway call. Default: makeGatewayGenerate(cfg). */
+export interface BuildMcpServerDeps {
+  knowledgeGenerate?: KnowledgeGenerateFn;
+}
+
 /** Fresh McpServer per request (stateless mode requires it — SDK throws on reuse). */
-export function buildMcpServer(): McpServer {
+export function buildMcpServer(cfg: AppConfig, deps?: BuildMcpServerDeps): McpServer {
   const server = new McpServer({ name: 'rio-demo', version: '1.0.0' });
 
   // Tool 1: no args → config has no inputSchema; handler signature is (extra) => ...
@@ -440,14 +450,38 @@ export function buildMcpServer(): McpServer {
     },
   );
   // FR-5: adding a tool = one more registerTool call here. Nothing else changes.
+  // Tool 8: ask_campus_knowledge — the ONE delegated-intelligence tool (Demo Spec 03 R7).
+  server.registerTool(
+    'ask_campus_knowledge',
+    {
+      description:
+        'Answers factual questions about CSUB — hours, locations, dates, deadlines, fees, ' +
+        'how-to steps, events. Use when: the caller asks any campus fact. Do NOT use when: ' +
+        'transferring a call, escalating, or making small talk.',
+      inputSchema: {
+        // zod RAW SHAPE, never z.object(...) — base Spec 07 R5 house rule
+        question: z.string().min(1).describe('One clear, self-contained question about CSUB.'),
+        topic: z.enum(KNOWLEDGE_TOPICS).optional()
+          .describe('Optional topic tag for logging only; never required.'),
+      },
+    },
+    async ({ question, topic }, extra) =>
+      askCampusKnowledge({ question, topic }, {
+        cfg,
+        corpus: CORPUS,
+        generate: deps?.knowledgeGenerate ?? makeGatewayGenerate(cfg),
+        signal: extra.signal,
+        log: logEvent,
+      }),
+  );
   return server;
 }
 
-export async function mcpRoutes(app: FastifyInstance): Promise<void> {
+export async function mcpRoutes(app: FastifyInstance, cfg: AppConfig, deps?: BuildMcpServerDeps): Promise<void> {
   app.post('/mcp', async (request, reply) => {
     // Take over the raw response; the transport writes status/headers/body itself.
     reply.hijack();
-    const server = buildMcpServer();
+    const server = buildMcpServer(cfg, deps);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
       enableJsonResponse: true, // plain JSON instead of SSE framing
