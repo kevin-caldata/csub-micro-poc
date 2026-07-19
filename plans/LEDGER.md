@@ -9,11 +9,11 @@ Companion protocol: `plans/README.md`. Wave structure: master plan `docs/specs/0
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: E
+- Wave: COMPLETE (offline) — awaiting human for M1-M5 live execution
 - Last updated: 2026-07-18
-- Next dispatchable tasks: T10.1 (dispatched); then T10.2-T10.7 fan-out per deps; T10.8 milestone execution needs the human
-- Open blockers: none
-- Notes: Waves A-D complete, 279/279 tests, typecheck clean. All 4 T05 deep reviews APPROVED (after fix loops). Wave D orchestrator merges applied (d9eecfd): startLoopMonitor boot + fallback seam (S23 validates at M1). onSessionStart widened to (session, pendingCall) per anticipated amendment. Minors accumulated for final whole-branch review: T02.4 teardown-loop guard, T03.4 test boilerplate dup + Spec03 R10 media-cadence gap, T05.3 closed-socket pushMark test (added in 47522ab-follow-ups? verify), T05.4 webhookToStartMs unseeded
+- Next dispatchable tasks: NONE agent-executable. Next step: human walks docs/M1-M5-EXECUTION-CHECKLIST.md (M1 first: Twilio console S20, GitHub remote + Railway project, sealed vars, first live call)
+- Open blockers: human required (phone, Twilio console, Railway dashboard, real API keys)
+- Notes: BUILD OFFLINE-COMPLETE. 356/356 vitest, typecheck+build clean. Final whole-branch review (most capable model): READY FOR M1 confirmed after fix wave (2362aae/e2b265f/fa9b8d5/f1a0db2/53a99f4 — teardown race closed, create-while-active benign+retry wired, clip path cwd-safe, LOG_LEVEL fail-closed, GATEWAY_WS_URL prod guard). M1 watch items: count gateway-array-frame + custom-event log lines (budget), capture gateway-error-event code+raw (S11), session-updated .raw (S1/S8), gateway-open/close pairing + credit deltas after kill tests. Accepted Minors logged in review output. Reviewer's top-3 first-call risks recorded in final-review transcript + checklist
 
 ---
 
