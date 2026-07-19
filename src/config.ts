@@ -25,6 +25,12 @@ const EnvSchema = z.object({
   TOKEN_TTL_SECONDS: z.coerce.number().int().max(300).default(300),
   GATEWAY_HANDSHAKE_TIMEOUT_MS: z.coerce.number().int().default(5000),
   GATEWAY_PING_SECONDS: z.coerce.number().int().default(0),
+  // findings/18 addendum (claims 21-23): the discriminating experiment for H2' (per-connection
+  // Railway/Twilio edge transport flakiness) — a WS ping/pong heartbeat on the TWILIO leg itself,
+  // modeled after GATEWAY_PING_SECONDS above but defaulting to ON (5 s), not off, since this IS
+  // the live-traffic instrumentation the addendum calls for. 0 = disabled (same convention as
+  // GATEWAY_PING_SECONDS).
+  TWILIO_PING_SECONDS: z.coerce.number().int().min(0).default(5),
   WAIT_FOR_SESSION_UPDATED: z.enum(['true', 'false']).default('false').transform(v => v === 'true'),
   GATEWAY_TAGS: z.string().optional(),
   TWILIO_VALIDATE_UPGRADE: z.enum(['true', 'false']).default('false'),
@@ -70,6 +76,8 @@ export interface AppConfig {
   tokenTtlSeconds: number;
   gatewayHandshakeTimeoutMs: number;
   gatewayPingSeconds: number;
+  /** findings/18 addendum claim 21 — Twilio-leg ping/pong heartbeat interval; 0 = disabled. */
+  twilioPingSeconds: number;
   waitForSessionUpdated: boolean;
   gatewayTags: string[] | undefined;
   twilioValidateUpgrade: boolean;
@@ -121,6 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     tokenTtlSeconds: e.TOKEN_TTL_SECONDS,
     gatewayHandshakeTimeoutMs: e.GATEWAY_HANDSHAKE_TIMEOUT_MS,
     gatewayPingSeconds: e.GATEWAY_PING_SECONDS,
+    twilioPingSeconds: e.TWILIO_PING_SECONDS,
     waitForSessionUpdated: e.WAIT_FOR_SESSION_UPDATED,
     gatewayTags: gatewayTags && gatewayTags.length > 0 ? gatewayTags : undefined,
     twilioValidateUpgrade: e.TWILIO_VALIDATE_UPGRADE === 'true',

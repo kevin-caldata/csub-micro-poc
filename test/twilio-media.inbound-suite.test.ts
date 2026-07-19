@@ -83,6 +83,7 @@ async function buildTestApp(
       publicHost: PUBLIC_HOST,
       twilioAuthToken: 'tok_test',
       twilioValidateUpgrade: false,
+      twilioPingSeconds: 0, // off by default in this file's harness — no test here exercises the heartbeat
       ...configOverrides,
     },
     claimPendingCall: deps.claimPendingCall ?? stubClaim([]),

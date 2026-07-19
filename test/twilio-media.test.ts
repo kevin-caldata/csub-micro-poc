@@ -43,7 +43,10 @@ function stubClaim(validTokens: Iterable<string>): TwilioMediaDeps['claimPending
   };
 }
 
-async function buildTestApp(deps: Partial<TwilioMediaDeps> = {}): Promise<{
+async function buildTestApp(
+  deps: Partial<TwilioMediaDeps> = {},
+  configOverrides: Partial<TwilioMediaDeps['config']> = {},
+): Promise<{
   app: FastifyInstance;
   onSessionStartCalls: Session[];
 }> {
@@ -58,7 +61,15 @@ async function buildTestApp(deps: Partial<TwilioMediaDeps> = {}): Promise<{
 
   const onSessionStartCalls: Session[] = [];
   const fullDeps: TwilioMediaDeps = {
-    config: { publicHost: 'example.ngrok.app', twilioAuthToken: 'tok_test', twilioValidateUpgrade: false },
+    config: {
+      publicHost: 'example.ngrok.app',
+      twilioAuthToken: 'tok_test',
+      twilioValidateUpgrade: false,
+      // Off by default in this file's shared harness (most tests don't care); the dedicated
+      // heartbeat describe block below opts in per-test via `configOverrides`.
+      twilioPingSeconds: 0,
+      ...configOverrides,
+    },
     claimPendingCall: deps.claimPendingCall ?? stubClaim([]),
     onSessionStart: deps.onSessionStart ?? ((s) => onSessionStartCalls.push(s)),
     startTimeoutMs: deps.startTimeoutMs,
@@ -360,6 +371,79 @@ describe('registerTwilioMediaRoute — stream-stop summary', () => {
       // abnormal iff 1006 with no `stop` seen — no `stop` frame was sent in this test.
       expect(stopLine?.abnormal).toBe(stopLine?.code === 1006);
       expect(typeof stopLine?.bufferedAmount).toBe('number');
+    } finally {
+      log.restore();
+      await closeTestApp(app);
+    }
+  });
+});
+
+// findings/18 addendum (claims 21-23) — route-level wiring for the Twilio-leg heartbeat.
+// `startTwilioHeartbeat`'s own logic (interval cadence, RTT, missed-pong latch, disabled-mode) is
+// unit-tested in isolation with fake timers in test/twilio-heartbeat.test.ts; this describe block
+// only proves the WIRING: it starts the instant a session exists, and clears at teardown.
+//
+// `@fastify/websocket`'s `injectWS` client is constructed via `new WebSocket(null, undefined,
+// { isServer: false })` (ws's own "attach a socket later" constructor path) — that path skips
+// `initAsClient`'s option defaulting entirely, so `_autoPong` is left `undefined` instead of ws's
+// normal client default of `true`. A REAL peer (a production `ws` client, or Twilio's own stack —
+// the addendum's own "ws-based client auto-pongs" claim) responds to a `ping` automatically; this
+// harness-only gap is worked around here by wiring the one manual `ping` -> `pong` responder a
+// real client would provide for free, so the test exercises genuine round-trip wiring rather than
+// a harness artifact.
+describe('registerTwilioMediaRoute — Twilio-leg heartbeat wiring (findings/18 addendum)', () => {
+  it('with twilioPingSeconds=1, a real ping/pong round-trips and the teardown summary reports it; no more pings after close', async () => {
+    const log = spyOnLog();
+    const { app } = await buildTestApp({ claimPendingCall: stubClaim(['tok-1']) }, { twilioPingSeconds: 1 });
+    try {
+      const ws = await app.injectWS('/twilio-media');
+      ws.on('ping', (data: Buffer) => ws.pong(data)); // injectWS's test double doesn't autoPong (see comment above) — a real ws client would
+      ws.send(connectedFrame);
+      ws.send(startFrame());
+      await waitUntil(() => sessions.has('MZ1'));
+
+      // Let at least one 1s ping/pong round-trip happen (ws auto-pongs a peer's ping).
+      await new Promise((r) => setTimeout(r, 1500));
+
+      ws.terminate();
+      await waitUntil(() => !sessions.has('MZ1'));
+
+      const lines = log.lines();
+      const summary = lines.find((l) => l.event === 'twilio-heartbeat');
+      expect(summary, 'expected a twilio-heartbeat summary line at teardown').toBeTruthy();
+      expect(summary?.callSid).toBe('CA1');
+      expect(summary?.streamSid).toBe('MZ1');
+      expect(summary?.pingsSent as number).toBeGreaterThanOrEqual(1);
+      expect(summary?.pongsReceived as number).toBeGreaterThanOrEqual(1);
+      expect(typeof summary?.maxRttMs).toBe('number');
+      expect(typeof summary?.lastPongAgoMs).toBe('number');
+
+      // Only ONE summary line for the whole call, and no per-pong info log alongside it.
+      expect(lines.filter((l) => l.event === 'twilio-heartbeat').length).toBe(1);
+    } finally {
+      log.restore();
+      await closeTestApp(app);
+    }
+  });
+
+  it('with the default twilioPingSeconds=0 override (disabled), no twilio-heartbeat line ever appears', async () => {
+    const log = spyOnLog();
+    const { app } = await buildTestApp({ claimPendingCall: stubClaim(['tok-1']) }); // default override: twilioPingSeconds:0
+    try {
+      const ws = await app.injectWS('/twilio-media');
+      ws.send(connectedFrame);
+      ws.send(startFrame());
+      await waitUntil(() => sessions.has('MZ1'));
+
+      await new Promise((r) => setTimeout(r, 300));
+
+      ws.terminate();
+      await waitUntil(() => !sessions.has('MZ1'));
+
+      const lines = log.lines();
+      expect(lines.some((l) => l.event === 'twilio-heartbeat')).toBe(false);
+      expect(lines.some((l) => l.event === 'twilio-pong-missed')).toBe(false);
+      expect(lines.some((l) => l.event === 'twilio-pong-slow')).toBe(false);
     } finally {
       log.restore();
       await closeTestApp(app);
