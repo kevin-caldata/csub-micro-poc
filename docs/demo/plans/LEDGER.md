@@ -9,10 +9,10 @@ Companion protocol: `docs/demo/plans/README.md`. Wave structure: master demo pla
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: DA — ready to dispatch Wave DA (nothing dispatched yet)
+- Wave: DA — DA1, DA2.1, DA3 dispatched 2026-07-19 (3 parallel lanes, isolated worktrees)
 - Last updated: 2026-07-19
-- Next dispatchable tasks: DA1, DA2.1, DA3 (3 parallel lanes, isolated worktrees per README §3); DB1.1 may fill an idle slot (early-dispatch allowance, README §2)
-- First action before any dispatch: append the R2.3 cross-reference row to base `plans/LEDGER.md` (README §8 item 1) — NOT yet done
+- Next dispatchable tasks: DA2.2 after DA2.1 merges; DB1.1 may fill an idle slot (early-dispatch allowance, README §2)
+- R2.3 cross-reference row appended to base `plans/LEDGER.md`: DONE 2026-07-19
 - Suite baseline: 356 tests (KF-1 flake rule — see Test rules below); typecheck clean
 - Open blockers: none. Human needed later: H1 at M-B (first live call), H2 in Wave DC (measurement sessions), H3 in Wave DD (email inputs + send)
 
@@ -38,11 +38,11 @@ Never delete rows. Never re-order. Append-only in Deviations.
 
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
-| DA1 | 04-corpus/01-corpus-file-and-loader.md | — | - | | |
-| DA2.1 | 02-static-tools/01-identity-flow-tools.md | — | - | | |
+| DA1 | 04-corpus/01-corpus-file-and-loader.md | — | D | | |
+| DA2.1 | 02-static-tools/01-identity-flow-tools.md | — | D | | |
 | DA2.2 | 02-static-tools/02-routing-and-escalation-tools.md | DA2.1 (dispatch with README N4 read-down) | - | | |
 | DA2.3 | 02-static-tools/03-sms-time-and-hello-removal.md | DA2.1, DA2.2 | - | | |
-| DA3 | 05-performance/01-aggregator-knowledge-extension.md | — | - | | |
+| DA3 | 05-performance/01-aggregator-knowledge-extension.md | — | D | | |
 
 **Merge point M-A** (all five rows OK + merged): full `npx vitest run` green (KF-1 rule below); record actual count in Current state; run the deferred G3 crisis-number spot check `src/mcp-server.ts` vs `assets/csub-corpus.md` if DA2.2's report flagged it (PD-03). File sets disjoint — no manual merge. DA2.* landed against the zero-arg `buildMcpServer()` (D3).
 

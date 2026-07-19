@@ -13,7 +13,7 @@ Companion protocol: `plans/README.md`. Wave structure: master plan `docs/specs/0
 - Last updated: 2026-07-19
 - Answered spikes recorded: S7, S15 (TTL max 300 s → config fix 7ee7ffe), S20 (trial harness sends unsigned webhooks — real number required), S21
 - Next: M1 remaining spikes (S1 pcmu flip, S4/S5/S6, S8 marin, S11–S14, S23 kill test) per docs/M1-M5-EXECUTION-CHECKLIST.md; then M2. Extract logs to docs/measurements/ within 72 h
-- New thread: RIO demo-impact analysis (thought exercise) → docs/findings/11–14 + docs/demo/RIO-DEMO-CONCEPT.md
+- New thread: RIO demo-impact analysis → docs/findings/11–17 + docs/demo/. DEMO BUILD IN EXECUTION: state lives in docs/demo/plans/LEDGER.md (R2.3 cross-reference; demo work never edits this ledger except S1/S8 answers)
 - Open blockers: human required for live calls
 - Notes: BUILD OFFLINE-COMPLETE. 356/356 vitest, typecheck+build clean. Final whole-branch review (most capable model): READY FOR M1 confirmed after fix wave (2362aae/e2b265f/fa9b8d5/f1a0db2/53a99f4 — teardown race closed, create-while-active benign+retry wired, clip path cwd-safe, LOG_LEVEL fail-closed, GATEWAY_WS_URL prod guard). M1 watch items: count gateway-array-frame + custom-event log lines (budget), capture gateway-error-event code+raw (S11), session-updated .raw (S1/S8), gateway-open/close pairing + credit deltas after kill tests. Accepted Minors logged in review output. Reviewer's top-3 first-call risks recorded in final-review transcript + checklist
 
