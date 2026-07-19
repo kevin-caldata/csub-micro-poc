@@ -427,6 +427,55 @@ describe('dispatch — error policy (Spec 05 R9)', () => {
     expect(JSON.parse(line!.fields?.raw as string)).toEqual({ b: 2 });
     expect(teardownCalls).toEqual(['gateway-error']);
   });
+
+  // S11 tuning (live-call evidence, call CAd9fff35837be498644789a9d485bf594): a barge-in's
+  // truncate can legitimately target audio that already finished playing (the mark-echo drain
+  // that disarms the epoch is subject to real Twilio round-trip latency — see findings/04 G6).
+  // Before this fix, the gateway's actual wording for that case ("Audio content of Nms is
+  // already shorter than Mms", code invalid_value) matched none of the benign classes, so the
+  // gateway leg tore the call down mid-response for a functionally no-op complaint.
+  it('a truncate-overshoot invalid_value error (S11) logs warn and does NOT teardown', () => {
+    const { s, logs } = makeSession();
+    let tornDown = 0;
+    s.teardown = () => {
+      tornDown += 1;
+    };
+
+    dispatch(s, {
+      type: 'error',
+      code: 'invalid_value',
+      message: 'Audio content of 10950ms is already shorter than 13160ms',
+      raw: { c: 3 },
+    });
+
+    const line = logs.find((l) => l.fields?.event === 'error');
+    expect(line).toBeTruthy();
+    expect(line!.level).toBe('warn');
+    expect(JSON.parse(line!.fields?.raw as string)).toEqual({ c: 3 });
+    expect(tornDown).toBe(0);
+  });
+
+  // The classification is message-pattern-scoped, not a blanket 'invalid_value' whitelist entry —
+  // a different invalid_value error (e.g. a genuinely malformed field) must still be fatal.
+  it('a different invalid_value error (no "already shorter than" phrasing) stays fatal', () => {
+    const { s, logs } = makeSession();
+    const teardownCalls: string[] = [];
+    s.teardown = (reason: string) => {
+      teardownCalls.push(reason);
+    };
+
+    dispatch(s, {
+      type: 'error',
+      code: 'invalid_value',
+      message: "Invalid value: 'bogus' is not a valid voice",
+      raw: { d: 4 },
+    });
+
+    const line = logs.find((l) => l.fields?.event === 'error');
+    expect(line).toBeTruthy();
+    expect(line!.level).toBe('error');
+    expect(teardownCalls).toEqual(['gateway-error']);
+  });
 });
 
 // Findings review (Important — R12 lost-race is call-fatal): before this fix, a create-while-

@@ -134,6 +134,43 @@ describe('isBenignGatewayError (A9, R10 heuristic)', () => {
       }),
     ).toBe(true);
   });
+
+  // S11 tuning (live-call evidence, call CAd9fff35837be498644789a9d485bf594): the truncate-
+  // overshoot wording never contained 'truncat' or 'audio_end_ms', so it fell through every
+  // pre-existing substring class and was misclassified non-benign, tearing the call down mid-
+  // response for a functionally no-op complaint (the audio had already finished playing).
+  it('matches the S11 truncate-overshoot shape: code invalid_value + "already shorter than"', () => {
+    expect(
+      isBenignGatewayError({
+        type: 'error',
+        code: 'invalid_value',
+        message: 'Audio content of 10950ms is already shorter than 13160ms',
+        raw: {},
+      }),
+    ).toBe(true);
+    // Case-insensitive.
+    expect(
+      isBenignGatewayError({
+        type: 'error',
+        code: 'invalid_value',
+        message: 'AUDIO CONTENT OF 1MS IS ALREADY SHORTER THAN 2MS',
+        raw: {},
+      }),
+    ).toBe(true);
+  });
+
+  // The fix must be scoped to this exact message shape, never a blanket 'invalid_value' ->
+  // benign — other invalid_value errors (e.g. a malformed tool argument) must stay fatal.
+  it('does NOT match a different invalid_value error lacking the "already shorter than" phrasing', () => {
+    expect(
+      isBenignGatewayError({
+        type: 'error',
+        code: 'invalid_value',
+        message: "Invalid value: 'bogus' is not a valid voice",
+        raw: {},
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('isCreateWhileActiveError (Spec 07 R12 lost-race recovery narrow predicate)', () => {
