@@ -8,6 +8,117 @@ import { logEvent } from './logger.js';
 /** SIM-V- + 6 uppercase hex — verify_identity mints it, reset_password shape-validates it (Spec 02 R5/R6/R9). */
 export const VERIFICATION_TOKEN_REGEX = /^SIM-V-[0-9A-F]{6}$/;
 
+/** route_call directory row shape (Spec 02 R4). */
+export interface RouteEntry {
+  keywords: string[];
+  department: string;
+  phone: string;
+  extension: string;
+  location: string;
+  estimatedWaitMinutes: number;
+}
+
+/** 11 rows, spec order (row order is authoritative for matching — Spec 02 R4). */
+export const ROUTE_DIRECTORY: RouteEntry[] = [
+  {
+    keywords: ['admission'],
+    department: 'Admissions',
+    phone: '(661) 654-3036',
+    extension: '3036',
+    location: 'Student Services Building, 47 SA',
+    estimatedWaitMinutes: 4,
+  },
+  {
+    keywords: ['registrar', 'records', 'transcript', 'enrollment'],
+    department: 'Office of the Registrar',
+    phone: '(661) 654-3036',
+    extension: '3036',
+    location: 'Student Services Building, 47 SA',
+    estimatedWaitMinutes: 6,
+  },
+  {
+    keywords: ['billing', 'refund', 'cashier', 'student financial'],
+    department: 'Student Financial Services',
+    phone: '(661) 654-3225',
+    extension: '3225',
+    location: 'Student Services Building',
+    estimatedWaitMinutes: 5,
+  },
+  {
+    keywords: ['financial aid', 'fafsa', 'scholarship', 'aid'],
+    department: 'Financial Aid & Scholarships',
+    phone: '(661) 654-3016',
+    extension: '3016',
+    location: 'Student Services Building',
+    estimatedWaitMinutes: 8,
+  },
+  {
+    keywords: ['it', 'help desk', 'password', 'tech', 'duo', 'netid'],
+    department: 'ITS Service Center',
+    phone: '(661) 654-4357',
+    extension: '4357',
+    location: 'Walter W. Stiern Library, Room 13',
+    estimatedWaitMinutes: 3,
+  },
+  {
+    keywords: ['health'],
+    department: 'Student Health Services',
+    phone: '(661) 654-2394',
+    extension: '2394',
+    location: 'Building 28 HC',
+    estimatedWaitMinutes: 7,
+  },
+  {
+    keywords: ['parking', 'permit'],
+    department: 'Parking Services',
+    phone: '(661) 654-2677',
+    extension: '2677',
+    location: 'University Police Department, 6 PS',
+    estimatedWaitMinutes: 5,
+  },
+  {
+    keywords: ['police', 'upd', 'safety'],
+    department: 'University Police (non-emergency)',
+    phone: '(661) 654-2677',
+    extension: '2677',
+    location: 'Building 6 PS',
+    estimatedWaitMinutes: 2,
+  },
+  {
+    keywords: ['counseling'],
+    department: 'Counseling Center',
+    phone: '(661) 654-3366',
+    extension: '3366',
+    location: 'Rivendell building, near Parking Lot E',
+    estimatedWaitMinutes: 4,
+  },
+  {
+    keywords: ['athletic', 'ticket', 'box office'],
+    department: 'Icardo Center Box Office',
+    phone: '(661) 654-3988',
+    extension: '3988',
+    location: 'Icardo Center',
+    estimatedWaitMinutes: 3,
+  },
+  {
+    keywords: ['advis'],
+    department: 'Academic Advising (AARC)',
+    phone: '(661) 654-2782',
+    extension: '2782',
+    location: "ask the caller's major, then direct via operator",
+    estimatedWaitMinutes: 6,
+  },
+];
+
+const ROUTE_FALLBACK: RouteEntry = {
+  keywords: [],
+  department: 'Campus Operator',
+  phone: '(661) 654-2782',
+  extension: '2782',
+  location: '9001 Stockdale Highway',
+  estimatedWaitMinutes: 1,
+};
+
 /** Fresh McpServer per request (stateless mode requires it — SDK throws on reuse). */
 export function buildMcpServer(): McpServer {
   const server = new McpServer({ name: 'hello-world', version: '1.0.0' });
@@ -162,6 +273,116 @@ export function buildMcpServer(): McpServer {
                 "I've started a password reset through MyID. An authorization code has been sent to the personal email on file. Go to myid.csub.edu, enter your NetID, and choose 'Forgot Password / Activate Account', then enter the code. Your new password must be 11 to 255 characters and meet 3 of the 4 complexity requirements.",
               duo_reminder:
                 "Never share your Duo code with anyone — not even with me. If you've lost your Duo device, call the ITS Service Center at (661) 654-4357.",
+            }),
+          },
+        ],
+      };
+    },
+  );
+  // Tool 5: escalate_to_human — the crisis path: deterministic, instant, LLM-free (Spec 02 R3).
+  server.registerTool(
+    'escalate_to_human',
+    {
+      description:
+        'Log an escalation and get the exact phone numbers to read aloud to the caller. Use when: the caller mentions self-harm, a crisis, or danger, or is distressed, angry, or asks for a human. Do NOT use for: routine department transfers (use route_call). For crisis calls, call this immediately — do not ask clarifying questions first.',
+      inputSchema: {
+        reason: z.string().describe('One short sentence on why the caller needs a human.'),
+        urgency: z
+          .enum(['routine', 'urgent', 'crisis'])
+          .describe(
+            "'crisis' for any mention of self-harm or danger; 'urgent' for time-sensitive or highly distressed; 'routine' otherwise.",
+          ),
+      },
+    },
+    async ({ reason, urgency }) => {
+      const speakThis =
+        urgency === 'crisis'
+          ? 'Please know these are real resources that can help right now: the CSUB Counseling Center at (661) 654-3366 — after hours, press 2 to reach a crisis counselor. You can also call or text 988, the Suicide and Crisis Lifeline, free and available any time. If you are in immediate danger, call 911 or University Police at (661) 654-2111. This demo line cannot transfer your call, so please dial one of those numbers directly.'
+          : urgency === 'urgent'
+            ? 'The campus operator at (661) 654-2782 can connect you with a person during business hours. If this is a safety concern, University Police are at (661) 654-2111, or call 911. This demo line cannot transfer your call, so please dial directly.'
+            : 'The campus operator at (661) 654-2782 can connect you with any campus office during business hours. This demo line cannot transfer your call, so please dial that number directly.';
+
+      logEvent({
+        level: urgency === 'crisis' ? 'warn' : 'info',
+        message: 'escalation requested',
+        event: 'crisis-escalation',
+        tool: 'escalate_to_human',
+        urgency,
+        reason: reason.slice(0, 200),
+      });
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              simulated: true,
+              status: 'escalation_logged',
+              live_transfer: false,
+              speak_this: speakThis,
+              resources: [
+                {
+                  name: 'CSUB Counseling Center',
+                  phone: '(661) 654-3366',
+                  note: 'after hours, press 2 to reach a crisis counselor',
+                },
+                { name: '988 Suicide & Crisis Lifeline', phone: '988', note: 'call or text, free, 24/7' },
+                { name: 'University Police (emergency)', phone: '(661) 654-2111', note: 'or call 911' },
+                { name: 'Campus Operator', phone: '(661) 654-2782', note: 'business hours' },
+              ],
+            }),
+          },
+        ],
+      };
+    },
+  );
+  // Tool 6: route_call — fake context-payload handoff to a campus department (Spec 02 R4).
+  server.registerTool(
+    'route_call',
+    {
+      description:
+        "Prepare a simulated transfer to a campus department. Returns the department's number, location, estimated wait, and a handoff script to read to the caller, and passes along a context note so the caller never repeats themselves. Use when: the caller asks to be transferred or needs something only that office can do. Do NOT use for: crisis or distress (use escalate_to_human) or answering factual questions (use ask_campus_knowledge).",
+      inputSchema: {
+        department: z
+          .string()
+          .describe("Department or office to reach, e.g. 'financial aid', 'admissions', 'IT help desk', 'registrar'."),
+        context: z
+          .string()
+          .optional()
+          .describe("One-sentence summary of the caller's need, passed to the department so the caller does not repeat themselves."),
+      },
+    },
+    async ({ department, context }) => {
+      const lowered = department.toLowerCase();
+      const matchedEntry = ROUTE_DIRECTORY.find((entry) => entry.keywords.some((kw) => lowered.includes(kw)));
+      const matched = matchedEntry !== undefined;
+      const entry = matchedEntry ?? ROUTE_FALLBACK;
+      const contextNote = context ?? 'General inquiry.';
+
+      logEvent({
+        level: 'info',
+        message: 'static tool served',
+        event: 'static-tool',
+        tool: 'route_call',
+        department: entry.department,
+        matched,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              simulated: true,
+              status: 'transfer_ready',
+              live_transfer: false,
+              department: entry.department,
+              phone: entry.phone,
+              extension: entry.extension,
+              location: entry.location,
+              estimated_wait_minutes: entry.estimatedWaitMinutes,
+              context_note: contextNote,
+              handoff_blurb: `I'm connecting you to ${entry.department} at ${entry.phone}. I've passed along a note so you won't have to repeat yourself: ${contextNote} Estimated wait is about ${entry.estimatedWaitMinutes} minutes.`,
             }),
           },
         ],

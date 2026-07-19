@@ -209,3 +209,215 @@ describe('static tools — identity flow (verify_identity / reset_password)', ()
     expect(resetLog.tokenValid).toBe(false);
   });
 });
+
+describe('escalate_to_human', () => {
+  const CRISIS_SPEAK_THIS =
+    'Please know these are real resources that can help right now: the CSUB Counseling Center at (661) 654-3366 — after hours, press 2 to reach a crisis counselor. You can also call or text 988, the Suicide and Crisis Lifeline, free and available any time. If you are in immediate danger, call 911 or University Police at (661) 654-2111. This demo line cannot transfer your call, so please dial one of those numbers directly.';
+  const URGENT_SPEAK_THIS =
+    'The campus operator at (661) 654-2782 can connect you with a person during business hours. If this is a safety concern, University Police are at (661) 654-2111, or call 911. This demo line cannot transfer your call, so please dial directly.';
+  const ROUTINE_SPEAK_THIS =
+    'The campus operator at (661) 654-2782 can connect you with any campus office during business hours. This demo line cannot transfer your call, so please dial that number directly.';
+
+  it('crisis: payload matches R3 — simulated, status escalation_logged, live_transfer false, exact crisis speak_this, exactly the four resources in order', async () => {
+    const res = await callTool('escalate_to_human', { reason: 'caller mentioned self-harm', urgency: 'crisis' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(payload.simulated).toBe(true);
+    expect(payload.status).toBe('escalation_logged');
+    expect(payload.live_transfer).toBe(false);
+    expect(payload.speak_this).toBe(CRISIS_SPEAK_THIS);
+    expect(payload.resources).toEqual([
+      { name: 'CSUB Counseling Center', phone: '(661) 654-3366', note: 'after hours, press 2 to reach a crisis counselor' },
+      { name: '988 Suicide & Crisis Lifeline', phone: '988', note: 'call or text, free, 24/7' },
+      { name: 'University Police (emergency)', phone: '(661) 654-2111', note: 'or call 911' },
+      { name: 'Campus Operator', phone: '(661) 654-2782', note: 'business hours' },
+    ]);
+  });
+
+  it('crisis: the strings (661) 654-3366, 988, (661) 654-2111, (661) 654-2782 all appear in the serialized payload', async () => {
+    const res = await callTool('escalate_to_human', { reason: 'caller mentioned self-harm', urgency: 'crisis' });
+    const body = (await res.json()) as RpcCallResult;
+    const serialized = JSON.stringify(parsePayload(body));
+    for (const s of ['(661) 654-3366', '988', '(661) 654-2111', '(661) 654-2782']) {
+      expect(serialized).toContain(s);
+    }
+  });
+
+  it('crisis: emits exactly one crisis-escalation log line at level warn with urgency and reason', async () => {
+    const lines = await withCapturedOutputAsync(async () => {
+      await callTool('escalate_to_human', { reason: 'caller mentioned self-harm', urgency: 'crisis' });
+    });
+    const crisisLines = lines.filter((l) => l.includes('"event":"crisis-escalation"'));
+    expect(crisisLines.length).toBe(1);
+    const parsed = JSON.parse(crisisLines[0]!) as Record<string, unknown>;
+    expect(parsed.level).toBe('warn');
+    expect(parsed.urgency).toBe('crisis');
+    expect(parsed.reason).toBe('caller mentioned self-harm');
+  });
+
+  it('crisis: a 250-char reason is sliced to 200 in the log line', async () => {
+    const longReason = 'x'.repeat(250);
+    const lines = await withCapturedOutputAsync(async () => {
+      await callTool('escalate_to_human', { reason: longReason, urgency: 'crisis' });
+    });
+    const crisisLines = lines.filter((l) => l.includes('"event":"crisis-escalation"'));
+    const parsed = JSON.parse(crisisLines[0]!) as Record<string, unknown>;
+    expect((parsed.reason as string).length).toBe(200);
+  });
+
+  it('urgent: exact urgent speak_this; log level info', async () => {
+    const lines = await withCapturedOutputAsync(async () => {
+      const res = await callTool('escalate_to_human', { reason: 'caller is very upset', urgency: 'urgent' });
+      const payload = parsePayload((await res.json()) as RpcCallResult);
+      expect(payload.speak_this).toBe(URGENT_SPEAK_THIS);
+    });
+    const crisisLines = lines.filter((l) => l.includes('"event":"crisis-escalation"'));
+    expect(crisisLines.length).toBe(1);
+    const parsed = JSON.parse(crisisLines[0]!) as Record<string, unknown>;
+    expect(parsed.level).toBe('info');
+  });
+
+  it('routine: exact routine speak_this; log level info', async () => {
+    const lines = await withCapturedOutputAsync(async () => {
+      const res = await callTool('escalate_to_human', { reason: 'caller wants a human', urgency: 'routine' });
+      const payload = parsePayload((await res.json()) as RpcCallResult);
+      expect(payload.speak_this).toBe(ROUTINE_SPEAK_THIS);
+    });
+    const crisisLines = lines.filter((l) => l.includes('"event":"crisis-escalation"'));
+    expect(crisisLines.length).toBe(1);
+    const parsed = JSON.parse(crisisLines[0]!) as Record<string, unknown>;
+    expect(parsed.level).toBe('info');
+  });
+
+  it('payload\'s first key is "simulated"', async () => {
+    const res = await callTool('escalate_to_human', { reason: 'caller wants a human', urgency: 'routine' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(Object.keys(payload)[0]).toBe('simulated');
+  });
+
+  it('invalid urgency value yields the SDK -32602 isError result', async () => {
+    const res = await callTool('escalate_to_human', { reason: 'caller wants a human', urgency: 'panic' });
+    const body = (await res.json()) as RpcCallResult;
+    expect(body.result.isError).toBe(true);
+  });
+
+  it('tools/list advertises the exact R3 description string', async () => {
+    const res = await rpcPost({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+    const body = (await res.json()) as { result: { tools: Array<{ name: string; description: string }> } };
+    const tool = body.result.tools.find((t) => t.name === 'escalate_to_human');
+    expect(tool).toBeTruthy();
+    expect(tool!.description).toBe(
+      'Log an escalation and get the exact phone numbers to read aloud to the caller. Use when: the caller mentions self-harm, a crisis, or danger, or is distressed, angry, or asks for a human. Do NOT use for: routine department transfers (use route_call). For crisis calls, call this immediately — do not ask clarifying questions first.',
+    );
+  });
+
+  it('determinism: two identical crisis calls return byte-identical text', async () => {
+    const res1 = await callTool('escalate_to_human', { reason: 'caller mentioned self-harm', urgency: 'crisis' });
+    const body1 = (await res1.json()) as RpcCallResult;
+    const res2 = await callTool('escalate_to_human', { reason: 'caller mentioned self-harm', urgency: 'crisis' });
+    const body2 = (await res2.json()) as RpcCallResult;
+    expect(body1.result.content[0]!.text).toBe(body2.result.content[0]!.text);
+  });
+});
+
+describe('route_call', () => {
+  it('financial aid + context: department/phone/extension/location/wait per the R4 row, context_note echoed, handoff_blurb equals the rendered template', async () => {
+    const res = await callTool('route_call', { department: 'financial aid', context: 'asking about fall disbursement' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(payload.department).toBe('Financial Aid & Scholarships');
+    expect(payload.phone).toBe('(661) 654-3016');
+    expect(payload.extension).toBe('3016');
+    expect(payload.location).toBe('Student Services Building');
+    expect(payload.estimated_wait_minutes).toBe(8);
+    expect(payload.context_note).toBe('asking about fall disbursement');
+    expect(payload.handoff_blurb).toBe(
+      "I'm connecting you to Financial Aid & Scholarships at (661) 654-3016. I've passed along a note so you won't have to repeat yourself: asking about fall disbursement Estimated wait is about 8 minutes.",
+    );
+  });
+
+  it("no keyword match falls back to Campus Operator with context_note 'General inquiry.'", async () => {
+    const res = await callTool('route_call', { department: 'basket weaving club' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(payload.department).toBe('Campus Operator');
+    expect(payload.phone).toBe('(661) 654-2782');
+    expect(payload.extension).toBe('2782');
+    expect(payload.location).toBe('9001 Stockdale Highway');
+    expect(payload.estimated_wait_minutes).toBe(1);
+    expect(payload.context_note).toBe('General inquiry.');
+  });
+
+  it("'student financial services' resolves to Student Financial Services — billing row wins before the aid keyword", async () => {
+    const res = await callTool('route_call', { department: 'student financial services' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(payload.department).toBe('Student Financial Services');
+  });
+
+  it("'IT help desk' resolves to ITS Service Center", async () => {
+    const res = await callTool('route_call', { department: 'IT help desk' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(payload.department).toBe('ITS Service Center');
+  });
+
+  it('matching lowercases the department arg', async () => {
+    const res = await callTool('route_call', { department: 'FINANCIAL AID' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(payload.department).toBe('Financial Aid & Scholarships');
+  });
+
+  it('ROUTE_DIRECTORY exports exactly 11 rows in the R4 table order', async () => {
+    const { ROUTE_DIRECTORY } = await import('../src/mcp-server.js');
+    expect(ROUTE_DIRECTORY.length).toBe(11);
+    expect(ROUTE_DIRECTORY.map((r) => r.department)).toEqual([
+      'Admissions',
+      'Office of the Registrar',
+      'Student Financial Services',
+      'Financial Aid & Scholarships',
+      'ITS Service Center',
+      'Student Health Services',
+      'Parking Services',
+      'University Police (non-emergency)',
+      'Counseling Center',
+      'Icardo Center Box Office',
+      'Academic Advising (AARC)',
+    ]);
+  });
+
+  it('emits one static-tool log line with tool route_call, the resolved department, and matched:false on fallback', async () => {
+    const hitLines = await withCapturedOutputAsync(async () => {
+      await callTool('route_call', { department: 'financial aid' });
+    });
+    const hitLog = JSON.parse(hitLines.filter((l) => l.includes('"event":"static-tool"') && l.includes('route_call'))[0]!) as Record<
+      string,
+      unknown
+    >;
+    expect(hitLog.tool).toBe('route_call');
+    expect(hitLog.department).toBe('Financial Aid & Scholarships');
+    expect(hitLog.matched).toBe(true);
+
+    const fallbackLines = await withCapturedOutputAsync(async () => {
+      await callTool('route_call', { department: 'basket weaving club' });
+    });
+    const fallbackLog = JSON.parse(
+      fallbackLines.filter((l) => l.includes('"event":"static-tool"') && l.includes('route_call'))[0]!,
+    ) as Record<string, unknown>;
+    expect(fallbackLog.tool).toBe('route_call');
+    expect(fallbackLog.department).toBe('Campus Operator');
+    expect(fallbackLog.matched).toBe(false);
+  });
+
+  it('tools/list advertises the exact R4 description string', async () => {
+    const res = await rpcPost({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} });
+    const body = (await res.json()) as { result: { tools: Array<{ name: string; description: string }> } };
+    const tool = body.result.tools.find((t) => t.name === 'route_call');
+    expect(tool).toBeTruthy();
+    expect(tool!.description).toBe(
+      "Prepare a simulated transfer to a campus department. Returns the department's number, location, estimated wait, and a handoff script to read to the caller, and passes along a context note so the caller never repeats themselves. Use when: the caller asks to be transferred or needs something only that office can do. Do NOT use for: crisis or distress (use escalate_to_human) or answering factual questions (use ask_campus_knowledge).",
+    );
+  });
+
+  it('payload\'s first key is "simulated"; live_transfer is false', async () => {
+    const res = await callTool('route_call', { department: 'financial aid' });
+    const payload = parsePayload((await res.json()) as RpcCallResult);
+    expect(Object.keys(payload)[0]).toBe('simulated');
+    expect(payload.live_transfer).toBe(false);
+  });
+});
