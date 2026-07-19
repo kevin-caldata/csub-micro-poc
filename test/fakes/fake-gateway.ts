@@ -25,7 +25,7 @@ export interface FakeGatewayScenario {
   /** Mid-VAD-turn-audio, emits `speech-started` and expects a `conversation-item-truncate`
    *  reply, acking via `custom` then `response-done {status:'cancelled'}` (R9 barge-in script). */
   bargeIn?: boolean;
-  /** Serves the greeting `response-create` as a scripted tool call (`hello`/Kevin) instead of
+  /** Serves the greeting `response-create` as a scripted tool call (`verify_identity`/Kevin) instead of
    *  plain audio, then a follow-up audio response once the client's gated `response-create`
    *  arrives (R9 tool-call script). */
   toolCall?: boolean;
