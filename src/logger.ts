@@ -13,7 +13,22 @@ export interface LogFields {
   [key: string]: unknown;   // additional flat attributes; keep values scalar, never nest
 }
 
-const MIN: LogLevel = (process.env.LOG_LEVEL as LogLevel) ?? 'info';
+const VALID_LEVELS = new Set<LogLevel>(['debug', 'info', 'warn', 'error']);
+
+/**
+ * Validates a raw `LOG_LEVEL` env value against the known `LogLevel` set. Findings review
+ * (Minor — fail-open bug): the old `(process.env.LOG_LEVEL as LogLevel) ?? 'info'` cast let ANY
+ * string through unchecked, so an invalid value (typo, stale config) became `RANK[MIN] ===
+ * undefined` below — and `RANK[level] < undefined` is `false` for every `level`, meaning nothing
+ * was ever filtered and every line (including `debug`) logged regardless of operator intent.
+ * Unknown/missing values now fall back to `'info'` instead. Exported so a unit test can exercise
+ * the validation directly without re-importing this module under a mutated `process.env`.
+ */
+export function resolveLogLevel(raw: string | undefined): LogLevel {
+  return raw !== undefined && VALID_LEVELS.has(raw as LogLevel) ? (raw as LogLevel) : 'info';
+}
+
+const MIN: LogLevel = resolveLogLevel(process.env.LOG_LEVEL);
 const RANK: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
 /**

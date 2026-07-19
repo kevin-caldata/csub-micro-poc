@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { log, logEvent, ms, now, safeRaw } from '../src/logger.js';
+import { log, logEvent, ms, now, safeRaw, resolveLogLevel } from '../src/logger.js';
 import { pct } from '../src/latency.js';
 
 /** Monkey-patches process.stdout/stderr.write for the duration of fn and returns what was written. */
@@ -113,6 +113,28 @@ describe('logger', () => {
       log('error', 'err-line', { code: 'X' });
     });
     expect(stderrWrites.length).toBe(0);
+  });
+});
+
+// Findings review (Minor — LOG_LEVEL fails open): `RANK[MIN]` was `undefined` for any invalid
+// LOG_LEVEL value, and `RANK[level] < undefined` is `false` for every level — so an unrecognized
+// value silently logged EVERYTHING (including debug) instead of falling back to a sane default.
+describe('resolveLogLevel (fail-closed-ish fallback for an invalid LOG_LEVEL)', () => {
+  it('passes through each of the four valid levels unchanged', () => {
+    expect(resolveLogLevel('debug')).toBe('debug');
+    expect(resolveLogLevel('info')).toBe('info');
+    expect(resolveLogLevel('warn')).toBe('warn');
+    expect(resolveLogLevel('error')).toBe('error');
+  });
+
+  it('falls back to info for an unrecognized value', () => {
+    expect(resolveLogLevel('verbose')).toBe('info');
+    expect(resolveLogLevel('DEBUG')).toBe('info'); // case-sensitive on purpose — no silent coercion
+    expect(resolveLogLevel('')).toBe('info');
+  });
+
+  it('falls back to info when unset', () => {
+    expect(resolveLogLevel(undefined)).toBe('info');
   });
 });
 
