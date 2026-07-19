@@ -9,10 +9,10 @@ Companion protocol: `docs/demo/plans/README.md`. Wave structure: master demo pla
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: DB — M-A gate PASSED 2026-07-19 (Wave DA complete: DA1, DA2.1–.3, DA3 all OK); DB1.1 already OK (early); DB1.2 + DB2 dispatched
+- Wave: DB COMPLETE — all M-B gate checks PASSED 2026-07-19; PUSH (=Railway deploy of RIO) awaiting human go, then H1 first live RIO call
 - Last updated: 2026-07-19
-- Next dispatchable tasks: none until DB1.2 + DB2 accept → then M-B deploy gate (grep gates, G3 byte-identity, G4 diff audit, push to main = Railway deploy) + H1 first live RIO call
-- Suite on main: 406 tests green, typecheck clean (baseline 356 + 50 demo tests)
+- Next dispatchable tasks: after deploy + H1 pass → DC1 (measurement runbook, human H2) ∥ DC2.1 (MCP deep-dive doc)
+- Suite on main: 428 tests green, typecheck clean (baseline 356 + 72 demo tests)
 - Open blockers: none. Human needed later: H1 at M-B (first live call), H2 in Wave DC (measurement sessions), H3 in Wave DD (email inputs + send)
 
 ---
@@ -52,12 +52,12 @@ M-A gate: Status `OK` · Date `2026-07-19` · Note `406/406 + typecheck clean on
 | Task | Plan file | Depends on | Status | Commit | Note |
 |---|---|---|---|---|---|
 | DB1.1 | 03-knowledge/01-config-keys-and-dependency.md | — (early-dispatch allowed: file set disjoint from every DA task, README §2; needs npm registry access, PD-07) | OK | ce81116 | review APPROVED zero findings; ai@7.0.31 one-package add verified (npm ls); 362/362 in lane; 21/21 config tests on main post-merge |
-| DB1.2 | 03-knowledge/02-knowledge-tool-handler.md | DB1.1, M-A (DA1 `CSUB_CORPUS` + DA2.1–.3 mcp-server body) | D | | |
+| DB1.2 | 03-knowledge/02-knowledge-tool-handler.md | DB1.1, M-A (DA1 `CSUB_CORPUS` + DA2.1–.3 mcp-server body) | OK | 4fa8717 | review APPROVED; error path traced to SDK backstop + exercised live; 424/424 in lane, 18 new tests |
 | DB2 | 01-persona/01-instructions-and-greeting.md | M-A (DA2.1–.3 merged — tool names live) | OK | be585b8 | review APPROVED zero real findings; R3 unwrap independently re-derived 0 diffs; INSTRUCTIONS 5031 chars; D15 verified; 410/410 in lane |
 
 **Merge point M-B — the deploy gate** (all rows OK + merged): (1) full suite + `npm run typecheck` green; (2) grep gates Spec 03 A3 (no fallback in `src/`), Spec 04 A5 (corpus read only in `src/corpus.ts`), Spec 02 A9 (no live `'hello'`); (3) G3 crisis-number byte-identity across `src/gateway.ts`, `src/mcp-server.ts`, `assets/csub-corpus.md`; (4) R8.5 diff audit — G4 preamble assertions (`test/gateway.session-config.test.ts:100-102`, `:124-128`) and voice-default assertion (`:103`) unmodified; (5) push `main` → Railway auto-deploy → live. Then **H1 (human)**: watch deploy, first RIO call, Spec 01 A8 checks (a)–(e).
 
-M-B gate: Status ` - ` · Date ` ` · Note ` ` · H1: Status ` - ` · Note ` `
+M-B gate: Status `CHECKS-PASSED, push pending human go` · Date `2026-07-19` · Note `428/428 + typecheck clean; grep gates clean (fallback 0, corpus-read corpus.ts only, live-hello 0); G3 byte-identity OK (D15: operator absent from gateway); G4 audit zero deletions, assertions intact` · H1: Status ` - ` · Note ` `
 
 ## Wave DC — live measurement + docs drafting (DC1 ∥ DC2.1; requires M-B deployed)
 
