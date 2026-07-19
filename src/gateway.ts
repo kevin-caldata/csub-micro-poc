@@ -137,9 +137,14 @@ export const BENIGN_ERROR_CODES = new Set<string>([]);
  * Deliberately code-AND-message scoped (never a blanket `BENIGN_ERROR_CODES.add('invalid_value')`
  * — `invalid_value` also covers real caller-facing mistakes, e.g. a malformed tool argument,
  * that must stay fatal): only THIS exact message shape, under THIS exact code, is benign.
+ *
+ * Review follow-up (tightened): matches the FULL production shape (`Audio content of <N>ms is
+ * already shorter than <M>ms`), not the bare `already shorter than` substring — the loose version
+ * would have silently swallowed any unrelated future `invalid_value` error that happens to contain
+ * that phrase (e.g. in an entirely different field's validation message).
  */
 function isTruncateOvershootError(ev: Extract<ServerEvent, { type: 'error' }>): boolean {
-  return ev.code === 'invalid_value' && /already shorter than/i.test(ev.message ?? '');
+  return ev.code === 'invalid_value' && /audio content of \d+ms is already shorter than \d+ms/i.test(ev.message ?? '');
 }
 
 /**

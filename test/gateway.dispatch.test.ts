@@ -171,6 +171,22 @@ describe('isBenignGatewayError (A9, R10 heuristic)', () => {
       }),
     ).toBe(false);
   });
+
+  // Review follow-up (Minor, tightened pattern): the bare substring "already shorter than" is no
+  // longer sufficient on its own — only the FULL production shape ("Audio content of <N>ms is
+  // already shorter than <M>ms") is benign, so an unrelated future invalid_value message that
+  // happens to contain that phrase (but not the full "Audio content of Nms..." wrapper) must stay
+  // fatal rather than being silently swallowed.
+  it('does NOT match an invalid_value error containing "already shorter than" outside the full production shape', () => {
+    expect(
+      isBenignGatewayError({
+        type: 'error',
+        code: 'invalid_value',
+        message: 'field "retention_window" is already shorter than the minimum allowed',
+        raw: {},
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('isCreateWhileActiveError (Spec 07 R12 lost-race recovery narrow predicate)', () => {
