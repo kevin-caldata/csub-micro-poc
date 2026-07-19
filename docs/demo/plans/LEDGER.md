@@ -9,10 +9,10 @@ Companion protocol: `docs/demo/plans/README.md`. Wave structure: master demo pla
 
 <!-- Orchestrator rewrites ONLY this block each session. Keep it under 10 lines. -->
 
-- Wave: DB COMPLETE — all M-B gate checks PASSED 2026-07-19; PUSH (=Railway deploy of RIO) awaiting human go, then H1 first live RIO call
+- Wave: M-B DEPLOYED 2026-07-19 (RIO live, commit 0502775 incl. DEV-02 hotfix); H1 first calls made — features all passed, 2 hangup bugs found: truncate-overshoot FIXED+deployed, Twilio 31924 instrumented (findings/18); re-test pending
 - Last updated: 2026-07-19
-- Next dispatchable tasks: after deploy + H1 pass → DC1 (measurement runbook, human H2) ∥ DC2.1 (MCP deep-dive doc)
-- Suite on main: 428 tests green, typecheck clean (baseline 356 + 72 demo tests)
+- Next dispatchable tasks: after re-test confirms hangups resolved → DC1 (measurement runbook, human H2) ∥ DC2.1 (MCP deep-dive doc)
+- Suite on main: 434 tests green, typecheck clean (baseline 356 + 78 demo tests)
 - Open blockers: none. Human needed later: H1 at M-B (first live call), H2 in Wave DC (measurement sessions), H3 in Wave DD (email inputs + send)
 
 ---
@@ -57,7 +57,7 @@ M-A gate: Status `OK` · Date `2026-07-19` · Note `406/406 + typecheck clean on
 
 **Merge point M-B — the deploy gate** (all rows OK + merged): (1) full suite + `npm run typecheck` green; (2) grep gates Spec 03 A3 (no fallback in `src/`), Spec 04 A5 (corpus read only in `src/corpus.ts`), Spec 02 A9 (no live `'hello'`); (3) G3 crisis-number byte-identity across `src/gateway.ts`, `src/mcp-server.ts`, `assets/csub-corpus.md`; (4) R8.5 diff audit — G4 preamble assertions (`test/gateway.session-config.test.ts:100-102`, `:124-128`) and voice-default assertion (`:103`) unmodified; (5) push `main` → Railway auto-deploy → live. Then **H1 (human)**: watch deploy, first RIO call, Spec 01 A8 checks (a)–(e).
 
-M-B gate: Status `CHECKS-PASSED, push pending human go` · Date `2026-07-19` · Note `428/428 + typecheck clean; grep gates clean (fallback 0, corpus-read corpus.ts only, live-hello 0); G3 byte-identity OK (D15: operator absent from gateway); G4 audit zero deletions, assertions intact` · H1: Status ` - ` · Note ` `
+M-B gate: Status `OK — deployed` · Date `2026-07-19` · Note `428/428 at gate; grep gates clean; G3 byte-identity OK (D15); G4 audit zero deletions; deployed 498f8fd then hotfix 0502775 (434/434)` · H1: Status `PART` · Note `A8 features (a)-(e) all observed correct live; 2 hangup bugs (DEV-02): truncate fix deployed, 31924 under instrumentation; re-test call pending`
 
 ## Wave DC — live measurement + docs drafting (DC1 ∥ DC2.1; requires M-B deployed)
 
