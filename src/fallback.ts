@@ -23,12 +23,21 @@
 // gated on spike S23 — do not wire it from this task.
 
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws'; // default-export namespace; used here only for the OPEN readyState constant
 import type { Session } from './sessions.js';
 import { sendMedia, sendMark, sendClear } from './twilio-media.js';
 import { now } from './logger.js';
 
-const CLIP_PATH = 'assets/fallback-apology.ulaw';
+// Findings review (Minor — boot CWD fragility): a bare `'assets/fallback-apology.ulaw'` is
+// resolved by Node relative to `process.cwd()`, NOT relative to this module — `node dist/server.js`
+// boot-crashes (`ENOENT`) the instant it's launched from any directory other than the repo root
+// (Railway's start command, a systemd unit, `npm start` invoked from elsewhere, etc). Resolve from
+// `import.meta.url` instead: this file compiles 1:1 from `src/fallback.ts` to `dist/fallback.js`
+// (tsconfig `rootDir: 'src'`/`outDir: 'dist'`), and `assets/` is a sibling of both `src/` and
+// `dist/` at the repo root — so `../assets/...` relative to THIS module's own URL is correct in
+// both the dev (tsx, running straight off `src/`) and built (`dist/`) layouts, regardless of cwd.
+const CLIP_PATH = fileURLToPath(new URL('../assets/fallback-apology.ulaw', import.meta.url));
 const MARK_NAME = 'fallback-apology';
 
 /** Loaded once at boot: raw mu-law clip bytes → base64, cached in module scope (Spec 09 R6.4). */
