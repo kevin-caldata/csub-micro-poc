@@ -16,7 +16,7 @@ Financial Aid and Scholarships can be reached at (661) 654-3016, finaid@csub.edu
 
 Student Financial Services is a separate office that handles billing and refunds — not the same desk as Financial Aid. Reach them at (661) 654-3225, sfs@csub.edu. Hours: Monday through Friday, 9:00 AM–4:00 PM.
 
-Student Health Services is in building 28 HC. Call (661) 654-2394. Hours: Monday through Friday, 8:00 AM–4:30 PM, closed for a staff lunch break from noon to 1:00 PM. Student Health Services handles routine visits, immunization records, and referrals to outside specialists when needed.
+Student Health Services is in building 28 HC. Call (661) 654-2394. Hours: Monday through Friday, 8:00 AM–4:30 PM, closed for a staff lunch break noon–1:00 PM. Student Health Services handles routine visits, immunization records, and referrals to outside specialists when needed.
 
 A few more offices callers commonly ask about:
 
@@ -134,11 +134,11 @@ CSUB's new-student orientation program is branded "Runner Rundown." Sessions for
 
 Beyond the July 6 kickoff date, additional late-July and August sessions are scheduled at July 20, 2026; August 3, 2026; and August 17, 2026, to accommodate students who commit later in the summer.
 
-Each Runner Rundown session runs a single full day, roughly 8:30 AM to 4:00 PM, and covers a campus tour, an academic advising appointment where the student builds their first-semester schedule, a financial aid overview, and same-day CSUB ID card photos.
+Each Runner Rundown session runs a single full day, roughly 8:30 AM–4:00 PM, and covers a campus tour, an academic advising appointment where the student builds their first-semester schedule, a financial aid overview, and same-day CSUB ID card photos.
 
 What to bring to a Runner Rundown session: a government-issued photo ID, the student's CSUB ID number (found in myCSUB), comfortable walking shoes for the campus tour, and a parent or guest is welcome but not required.
 
-A separate, shorter parent-and-family session runs alongside each full Runner Rundown date, from 9 AM to noon, covering financial aid basics, campus safety resources, and how families can support a student's transition — it's optional, and a parent can attend without the incoming student needing to be present for that particular portion.
+A separate, shorter parent-and-family session runs alongside each full Runner Rundown date, 9 AM–noon, covering financial aid basics, campus safety resources, and how families can support a student's transition — it's optional, and a parent can attend without the incoming student needing to be present for that particular portion.
 
 A student who misses all the scheduled July and August dates isn't locked out of enrolling — they should call the operator, (661) 654-2782, to ask about a late individual orientation appointment, since a handful of make-up slots are usually held back for exactly that situation.
 
@@ -188,8 +188,6 @@ The 988 Suicide & Crisis Lifeline is available by calling or texting 988 — it'
 
 For immediate danger to life or safety, the right number is 911, or University Police directly at (661) 654-2111.
 
-The Counseling Center offers individual counseling, group sessions, and short-term crisis support to enrolled students at no additional charge beyond standard fees already paid as part of enrollment — there is no separate per-visit bill for a currently enrolled student.
-
 These are the only phone numbers this section uses, and they are real, verified CSUB and national crisis resources — nothing in this section is fabricated.
 
 ## Campus events, late summer 2026
@@ -197,11 +195,11 @@ These are the only phone numbers this section uses, and they are real, verified 
 
 A few things happening on campus in late summer 2026:
 
-**Future 'Runner Day**, a campus-preview day for prospective students and families, is set for Saturday, August 8, 2026, from 9 AM to 2 PM, on the main campus lawn outside the Student Services Building. It's a mix of campus tours, department info tables, and a financial aid Q&A session aimed at families deciding where to enroll. Admissions and Financial Aid staff both host tables, and current students lead small-group tours every half hour throughout the day.
+**Future 'Runner Day**, a campus-preview day for prospective students and families, is set for Saturday, August 8, 2026, 9 AM–2 PM, on the main campus lawn outside the Student Services Building. It's a mix of campus tours, department info tables, and a financial aid Q&A session aimed at families deciding where to enroll. Admissions and Financial Aid staff both host tables, and current students lead small-group tours every half hour throughout the day.
 
-A **Rowdy the Roadrunner meet-and-greet** is scheduled for Friday, August 14, 2026, from 11 AM to 1 PM at the Icardo Center plaza. Rowdy will be posing for photos with incoming students as a light, welcoming kickoff to the new academic year, with free lemonade and campus swag while supplies last.
+A **Rowdy the Roadrunner meet-and-greet** is scheduled for Friday, August 14, 2026, 11 AM–1 PM at the Icardo Center plaza. Rowdy will be posing for photos with incoming students as a light, welcoming kickoff to the new academic year, with free lemonade and campus swag while supplies last.
 
-The **Stiern Library workshop series** runs every Wednesday afternoon starting August 19, 2026, from 2 PM to 3 PM, in the library's lower-level classroom. Topics rotate weekly: research-database basics one week, citation software the next, and a "finals week study strategies" session later in the term. No registration is required — students can simply show up to whichever week's topic interests them.
+The **Stiern Library workshop series** runs every Wednesday afternoon starting August 19, 2026, 2 PM–3 PM, in the library's lower-level classroom. Topics rotate weekly: research-database basics one week, citation software the next, and a "finals week study strategies" session later in the term. No registration is required — students can simply show up to whichever week's topic interests them.
 
 For tickets or venue questions about any campus event, contact the Icardo Center Box Office: (661) 654-3988, tickets@csub.edu, or visit gorunners.com/tickets.
 
