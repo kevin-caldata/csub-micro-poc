@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws'; // default-export namespace; used here only for the OPEN readyState constant
 import type { Session } from './sessions.js';
 import { sendMedia, sendMark, sendClear } from './twilio-media.js';
+import { markExpectedEnd } from './reconnect.js';
 import { now } from './logger.js';
 
 // Findings review (Minor — boot CWD fragility): a bare `'assets/fallback-apology.ulaw'` is
@@ -126,8 +127,17 @@ export async function playFallbackAndCloseWith(
       err: String(err),
     });
   } finally {
+    // findings/18 reconnect: this close is DELIBERATE (the FR-7 spoken-fallback hangup) — mark
+    // it 'expected' BEFORE closing so /twiml-action ends the call instead of reconnecting it.
+    // Without this mark, the code-less close() below reads back as a non-1000 close code and
+    // would loop: fallback -> close -> /twiml-action -> reconnect -> gateway fails again ->
+    // fallback -> ... Marked unconditionally (even when the socket is already non-OPEN): the
+    // intent to end the call is decided here regardless of what the socket state allows.
+    markExpectedEnd(s.callSid);
     try {
-      // R6.4-5: closing the Twilio WS ends the call (verified `<Connect>` fall-through).
+      // R6.4-5: closing the Twilio WS ends the call — with the reconnect TwiML (findings/18)
+      // the `<Connect action>` callback sees this call's 'expected' mark and returns an empty
+      // <Response/>, same end-of-call as the old verified `<Connect>` fall-through.
       if (s.twilioWs.readyState === WebSocket.OPEN) s.twilioWs.close();
     } catch (err) {
       s.log('error', 'fallback close failed', {

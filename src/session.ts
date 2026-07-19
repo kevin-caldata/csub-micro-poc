@@ -44,6 +44,7 @@ import {
   isBenignGatewayError,
   isCreateWhileActiveError,
   openGatewayLeg as realOpenGatewayLeg,
+  RECONNECT_GREETING_INSTRUCTIONS,
   type GatewayLegCallbacks,
 } from './gateway.js';
 import { createTranscoder, audioFormatsFor } from './dsp.js';
@@ -605,6 +606,13 @@ export async function startSessionBridge(
     formats: audioFormatsFor(config.audioMode),
     config,
     callbacks,
+    // findings/18 reconnect flow: entries minted by /twiml-action carry `reconnectAttempt` —
+    // the caller already heard the full greeting on the original stream, so this session
+    // apologizes for the drop and continues instead of re-greeting. Absent (every fresh call)
+    // -> undefined -> gateway.ts's standard GREETING_INSTRUCTIONS, unchanged.
+    ...(pendingCall.reconnectAttempt !== undefined
+      ? { greetingInstructions: RECONNECT_GREETING_INSTRUCTIONS }
+      : {}),
   });
 
   if (session.tornDown) {

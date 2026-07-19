@@ -20,6 +20,7 @@ import type { PendingCall } from './twiml.js';
 // because both modules only call into each other from inside function bodies, never at
 // top-level module-evaluation time.
 import { onMarkEcho } from './bargein.js';
+import { markAbnormalEnd, markExpectedEnd } from './reconnect.js';
 
 // --- Vendored inbound message types (Spec 03 R3 — exact wire schemas). All numeric-looking
 // fields (`sequenceNumber`, `media.chunk`, `media.timestamp`) are STRINGS on the wire — never
@@ -208,6 +209,14 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
         abnormal,
         bufferedAmount: socket.bufferedAmount,
       });
+      // findings/18 reconnect: a non-1000 close that no deliberate-close path claimed first is
+      // an infrastructure drop — record it so /twiml-action reconnects this call. Every
+      // deliberate close (caller-hangup stop, fallback, shutdown drain, teardownSession) marks
+      // 'expected' BEFORE closing, and markAbnormalEnd never overwrites that mark — so this
+      // blanket "any non-1000 code" write only ever sticks for genuinely abnormal ends (1006
+      // network drops chief among them). Marked BEFORE teardownSession below so the registry is
+      // settled before Twilio's /twiml-action request can arrive.
+      if (callSid && code !== 1000) markAbnormalEnd(callSid);
       // All teardown lives here — the single, idempotent path (Spec 03 R7).
       if (session) teardownSession(session);
     });
@@ -261,6 +270,7 @@ export function registerTwilioMediaRoute(app: FastifyInstance, deps: TwilioMedia
                 event: 'auth-fail',
                 callSid: startCallSid,
               });
+              markExpectedEnd(startCallSid); // deliberate close — never a reconnect trigger
               socket.close(1008, 'bad token'); // 1008 = policy violation
               // Never create a Session; never open/attach the gateway leg.
               return;
@@ -412,6 +422,7 @@ export function sendMedia(session: Session, payloadB64: string): void {
 
   if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
     session.log('warn', 'twilio leg backpressure — dropping call', { buffered: socket.bufferedAmount });
+    markExpectedEnd(session.callSid); // deliberate drop (unrecoverable call) — never a reconnect trigger
     socket.close(1011, 'backpressure'); // 'close' handler performs teardown [Spec 03 R6]
     return;
   }
@@ -445,9 +456,11 @@ export function sendClear(session: Session): void {
 }
 
 /**
- * Clean-hangup mechanism (normative for FR-7): with the PoC TwiML (nothing after
- * `</Connect>`), closing this WS makes `<Connect>` finish and the call end [Spec 03 R7;
- * findings/03 claim 1]. Codes: 1000 deliberate, 1001 SIGTERM shutdown, 1008 auth failure, 1011
+ * Clean-hangup mechanism (normative for FR-7): closing this WS makes `<Connect>` finish; the
+ * TwiML's action="/twiml-action" callback (findings/18 reconnect flow, src/twiml.ts) then sees
+ * no abnormal-end mark for the call and returns an empty <Response/>, ending the call — same
+ * caller experience as the old nothing-after-</Connect> fall-through, one HTTP round trip
+ * later. Codes: 1000 deliberate, 1001 SIGTERM shutdown, 1008 auth failure, 1011
  * backpressure/internal fault.
  */
 export function hangup(session: Session, code = 1000, reason = 'bye'): void {

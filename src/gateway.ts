@@ -231,6 +231,10 @@ export interface OpenGatewayLegOptions {
   // (no session-update is sent yet — see T04.4), but part of the stable public signature.
   config: AppConfig; // deviation-by-design (see interface doc above)
   callbacks: GatewayLegCallbacks;
+  /** findings/18 reconnect flow: overrides the greeting `response-create` instructions for this
+   *  leg (session.ts passes RECONNECT_GREETING_INSTRUCTIONS for reconnected streams). Absent ->
+   *  the standard GREETING_INSTRUCTIONS — existing behavior, bit-identical. */
+  greetingInstructions?: string;
 }
 
 /** Public handle for one gateway WS leg (Spec 04 R5, verbatim). One `GatewayLeg` per call. */
@@ -300,6 +304,7 @@ When a tool returns a handoff blurb or scripted text, read it essentially verbat
 When reading numbers, IDs, or codes, speak each character separately and confirm: "Just to confirm, I heard 8... 3... 5... 2... Is that right?" Never ask for, or accept, a Duo verification code - if a caller starts reading one, stop them and remind them never to share Duo codes with anyone.
 
 # Conversation Flow
+If the caller interrupts the greeting, do not restart or repeat it - respond directly to what they said.
 1. After the greeting, let the caller state their need in their own words - never recite a menu of options.
 2. If the caller sounds stressed, acknowledge it in one short empathic sentence before doing anything else.
 3. Handle the request through the Answering Policy above, then ask one short follow-up ("Anything else I can help with?").
@@ -319,6 +324,21 @@ const GREETING_INSTRUCTIONS =
   'Say exactly this greeting, then stop and listen: "Thanks for calling Cal State Bakersfield! ' +
   "This is Rio, the Roadrunner Intelligent Operator. I'm an AI assistant on a demo line - " +
   'everything I look up is simulated. I can help in English o en español - how can I help you today?"';
+
+/**
+ * Reconnect greeting (findings/18 <Connect action> stream-reconnect flow): used instead of
+ * GREETING_INSTRUCTIONS when the session is a RECONNECT of a call whose media stream was killed
+ * abnormally (Railway edge proxy, Twilio error 31924) — the caller already heard the full
+ * greeting/disclaimer on the original stream, so this one only acknowledges the drop and hands
+ * the turn straight back. Same per-response instruction-override mechanism as
+ * GREETING_INSTRUCTIONS (findings/04 D5). Exported (unlike GREETING_INSTRUCTIONS) because
+ * session.ts selects it per-call via `OpenGatewayLegOptions.greetingInstructions`.
+ */
+export const RECONNECT_GREETING_INSTRUCTIONS =
+  'The phone line dropped for a moment and has just been reconnected mid-call. Say exactly ' +
+  'this, then stop and listen: "Sorry about that - we lost the line for a moment. This is Rio ' +
+  'again. What can I help you with?" Do not repeat the full welcome greeting or the demo ' +
+  'disclaimer.';
 
 /**
  * Builds the full `session-update` config for a call (Spec 04 R8 snippet). `formats` comes
@@ -366,6 +386,7 @@ function buildCallSessionConfig(
  */
 export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
   const { mint, callSid, tools, formats, config, callbacks } = opts;
+  const greetingInstructions = opts.greetingInstructions ?? GREETING_INSTRUCTIONS;
 
   const rt = gateway.experimental_realtime(config.modelId);
   // Spec 10 R10 (test-only): GATEWAY_WS_URL bypasses mintRealtimeToken/getWebSocketConfig
@@ -675,7 +696,7 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
     // handleEvent's 'session-updated' case funnel through this one closure, so
     // `onGreetingCreateSent` fires from a single call site regardless of path (Spec 08 R7).
     const greet = () =>
-      send({ type: 'response-create', options: { instructions: GREETING_INSTRUCTIONS } }).then(() => {
+      send({ type: 'response-create', options: { instructions: greetingInstructions } }).then(() => {
         callbacks.onGreetingCreateSent?.();
       });
     if (config.waitForSessionUpdated) {
