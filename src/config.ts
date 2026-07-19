@@ -36,13 +36,21 @@ const EnvSchema = z.object({
   GATEWAY_WS_URL: z.string().min(1).optional(),
   // ── Demo Spec 03: delegated-intelligence knowledge tool ──
   MCP_MODEL_ID: z.string().min(1).default('google/gemini-3.1-flash-lite'),
-  MCP_MODEL_MAX_TOKENS: z.coerce.number().int().positive().default(150),
+  // Raised 150 → 400 (2026-07-19 live-call tuning, findings/18 FINDING B): a "tell me everything"
+  // question hit AI_NoObjectGeneratedError at 150 because the model's JSON got truncated
+  // mid-generation. 400 gives headroom for multi-fact answers while still bounding cost; the
+  // brevity contract in src/knowledge.ts's system prompt keeps normal answers well under this.
+  MCP_MODEL_MAX_TOKENS: z.coerce.number().int().positive().default(400),
   // MUST stay strictly below runTool's 5000 ms transport cap (src/tools.ts:42) so the handler's
   // clean error envelope always wins the race against the SDK's generic RequestTimeout
   // [findings/16 C3, C12].
+  // Raised 3500 → 4500 (2026-07-19 live-call tuning, findings/18 FINDING A): the first
+  // ask_campus_knowledge call of a session (cold gemini-3.1-flash-lite path) was hitting this
+  // budget at ~3502 ms; warm calls run 1100-1250 ms. 4500 still leaves 500 ms of headroom under
+  // the 5000 ms transport cap for MCP overhead.
   MCP_TOOL_TIMEOUT_MS: z.coerce.number().int().positive()
     .lt(5000, 'MCP_TOOL_TIMEOUT_MS must be < 5000 (runTool transport cap, src/tools.ts:42)')
-    .default(3500),
+    .default(4500),
 });
 
 export interface AppConfig {

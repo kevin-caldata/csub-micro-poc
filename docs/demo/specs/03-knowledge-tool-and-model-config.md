@@ -288,3 +288,7 @@ export function makeGatewayGenerate(cfg: AppConfig): KnowledgeGenerateFn {
 - Latency tuning experiments, measurement aggregation, and the revert rule — Demo Spec 05 (this spec only emits the `knowledge-call` line it consumes).
 - ToolLoop, `runTool`, the double gate, and the 5000 ms transport cap — unchanged (base Spec 07); this spec deliberately fits inside them.
 - Announcement email content — separate deliverable (`docs/demo/RIO-ANNOUNCEMENT-EMAIL.md` rewrite).
+
+---
+
+Amended 2026-07-19: live-call tuning — timeout 4500, max tokens 400, brevity rule; DEV evidence in ledger.

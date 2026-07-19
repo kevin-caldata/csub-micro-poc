@@ -91,8 +91,8 @@ describe('loadConfig — Demo Spec 03 MCP knowledge keys', () => {
   it('applies the three MCP defaults when unset', () => {
     const c = loadConfig({ ...BASE });
     expect(c.mcpModelId).toBe('google/gemini-3.1-flash-lite');
-    expect(c.mcpModelMaxTokens).toBe(150);
-    expect(c.mcpToolTimeoutMs).toBe(3500);
+    expect(c.mcpModelMaxTokens).toBe(400);
+    expect(c.mcpToolTimeoutMs).toBe(4500);
   });
 
   it('coerces MCP numeric strings and accepts the 4999 boundary', () => {
