@@ -15,7 +15,8 @@ before the announcement email is released; the deploy freeze (Demo Spec 06)
 ends all further flips. Subjective gates (E1 audio quality, E2 clipped
 turns) must name their judging procedure and judge count in the row's notes
 (R1a). The configuration of record at any moment must be derivable from this
-ledger alone (R12).
+ledger alone (R12). This ledger is committed together with each session's
+measurement directory, within that same 72 h extraction deadline (R3).
 
 | date | experiment | variable=value | measurement dir | gate | result (numbers) | verdict | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
