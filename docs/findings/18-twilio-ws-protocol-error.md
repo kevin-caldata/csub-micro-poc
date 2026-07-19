@@ -389,6 +389,89 @@ model (H2') does not require it, so it drops in priority rather than being newly
 
 ---
 
+## Addendum 2 (2026-07-19 18:42-18:44 UTC) — concurrent-caller round: H2' refuted, correlated edge failure implicated
+
+24. **New data set (deploy 0058bfb, first multi-caller test).** Kevin dialed the line from multiple phones
+    simultaneously. Three calls failed with 31924 inside a 20-second window; single-caller calls
+    immediately before (18:34-18:40, three calls) and after (`CA795da4`, 18:43:54, solo) completed
+    cleanly. Failures: `CA785c04` (3.3 s, died mid caller-speech, no concurrent call yet established),
+    `CAc32b4e` (14.7 s) and `CA40f858` (8.8 s) — the latter two **concurrent with each other**.
+25. **The decisive observation: the two concurrent calls failed within 4 ms of each other.** Twilio's
+    own `stream-error` timestamps are 18:43:14.579278468Z (`CA40f858`) and 18:43:14.583266393Z
+    (`CAc32b4e`). Two independent Twilio media connections do not fail 4 ms apart by per-connection
+    chance; this is a single correlated event on shared infrastructure — the Railway edge/proxy node
+    both TCP streams traverse (an abrupt proxy-side reset surfaces to Twilio as a WS protocol error).
+26. **The claim-22 discriminator fired, and it kills H2' (gradual per-connection transport
+    degradation).** Heartbeat data at the moment of failure: `CA40f858` 1/1 pongs, maxRtt 14 ms;
+    `CAc32b4e` 2/2 pongs, maxRtt 15 ms; zero `twilio-pong-missed`/`twilio-pong-slow` warnings on any
+    call. Pongs were fast and unbroken right up to the instant 31924 fired — per claim 22 this is the
+    outcome that "H2' loses support." Combined with claim 25, the revised verdict is **H5: abrupt,
+    correlated connection reset at the shared Railway edge (high confidence)** — not gradual flakiness,
+    not per-connection, not app-content-triggered (event-loop p99 22.1 ms during the failure window;
+    process survived; next solo call on the same replica succeeded).
+27. **App-side interference re-audited and excluded.** No cross-socket iteration/broadcast exists in
+    src (grep clean); sessions are keyed by streamSid; the `stream-error` callback arrived from Twilio
+    *before* our `terminate()` on each failing call, so causality is Twilio/edge → us. The solo failure
+    `CA785c04` (claim 24) predates the second call's TwiML request by ~0.6 s, so strict concurrency is
+    not proven for it — but all three failures clustering in the one multi-caller window, against zero
+    failures in eight surrounding solo calls, makes the concurrency correlation itself robust.
+28. **The DEV-03 mitigations worked exactly as designed under real failure**: `stream-error-teardown`
+    fired within milliseconds on all three calls, sockets closed immediately (no 30 s-2 min zombie
+    tail, no phantom post-call logs), and each call emitted its heartbeat summary. The failure mode is
+    now clean: the call drops, resources release instantly, and the caller can redial.
+29. **Remediation is now firmly infrastructure, with a reproducer.** Evidence pack for a Railway
+    support ticket: two call SIDs failing 4 ms apart on one replica (`e627a705`, region
+    us-east4-eqdc4a), clean WS pongs until the instant of failure, Twilio debug event SIDs
+    (`NO600fd339…`, `NO1ce8f17a…`, `NO7d618b8e…`), and a deterministic-ish reproducer (2+ simultaneous
+    inbound callers). Alternatives if Railway can't resolve: change Railway region, or host the
+    `/twilio-media` WS endpoint off Railway. App-level code changes are NOT indicated by this data.
+
+## Addendum 3 (2026-07-19) — external research synthesis (3 parallel web-research passes)
+
+30. **31924 is a frame-level error, and a clean TCP reset would NOT produce it.** Twilio's error
+    taxonomy: 31903 "Broken Pipe" explicitly covers "a firewall, proxy, load balancer, or other
+    intermediate network element interrupted traffic"; 31921 covers a real Close frame; 31924 means
+    Twilio's WS parser received bytes it could not parse as valid RFC 6455 frames (truncated frame,
+    fragmented control frame, garbage spliced into the upgraded stream). So a proxy tearing down
+    connections MID-FRAME — not a clean reset — is what surfaces as 31924. Sources:
+    twilio.com/docs/api/errors/31924, /31903, /31921, /31951.
+31. **Proven precedent that an intermediary alone causes 31924 with a correct app:**
+    cloudflare/cloudflared#1465 — identical Twilio Media Streams app works via ngrok, fails with
+    31920/31924 through Cloudflare Tunnel. (This also DISQUALIFIES the Cloudflare Tunnel sidecar as a
+    remediation for this workload, despite Railway community recommending it generically.)
+32. **Railway staff have confirmed the exact mechanism matching our 4 ms double failure.** Railway
+    cycles its (custom-built, HTTP/1.1-only) edge proxies; cycling severs every live WebSocket on
+    that proxy instance at the same instant. Reported Nov 2025, staff-acknowledged, ticket backlogged
+    then canceled Jan 2026, recurring Apr 2026 with staff calling increased restarts "expected" (TCP
+    proxy updates). Staff-recommended mitigation — "hold multiple WebSocket connections and
+    multiplex" — is structurally impossible for Media Streams (exactly one socket per call, minted by
+    Twilio). Railway also states "we don't advertise or guarantee any specific duration for WebSocket
+    connections," and no proxy timeout/keepalive knob exists in railway.json/toml. Sources:
+    forums-production.up.railway.app/questions/mysterious-web-socket-disconnection-87fd9f1b (staff),
+    station.railway.com threads (TCP_OVERWIN, 1006 closes, silent drops),
+    docs.railway.com/networking/edge-networking, /reference/config-as-code.
+33. **Our app already implements the community-cited hygiene fixes**: `perMessageDeflate: false` on
+    both legs (server.ts:52, gateway.ts:253 — the Railway-staff-named fix for proxy windowing
+    errors), JSON-text-frames only (`media`/`mark`/`clear`), per-session state keyed by streamSid
+    with no shared mutable state, `ws.ping()` unfragmented ≤125 B. No documentation or community
+    report anywhere of Twilio mishandling server-initiated pings (ranked last as a cause; cheaply
+    falsifiable with `TWILIO_PING_SECONDS=0`). Event-loop p99 22 ms during the failure window rules
+    out the stall class. App-level causes are now LOW confidence across all three research passes.
+34. **Ranked remediations (synthesis).** (1) **Move the WS endpoint off Railway's edge** — Fly.io IAD
+    is the Twilio-ecosystem default for Media Streams (twilio-labs/call-gpt), or a small VM in
+    us-east; HIGH confidence, ~half-day effort. (2) **Railway Central Station ticket in parallel** —
+    evidence pack: both calls' 101-upgrade requestIds/`X-Railway-Request-Id`, millisecond UTC
+    timestamps (18:43:14.579/.583Z), `X-Railway-Edge` POP, Network Flow Log lines, Twilio debug SIDs,
+    reproducer (2 simultaneous callers); LOW-MEDIUM fix confidence given the canceled-ticket history.
+    (3) Hygiene: verify App Sleeping/Serverless is OFF; keep us-east4. NOT recommended: Cloudflare
+    Tunnel (claim 31), extra replicas (random LB, no sticky sessions, doesn't address proxy cuts),
+    Railway TCP proxy (no TLS termination; Twilio requires wss:443). Longer-term alternative: Twilio
+    ConversationRelay or OpenAI Agents SDK Twilio transport move the fragile WS protocol handling to
+    managed infrastructure.
+35. **Product implication:** the self-serve announcement email is precisely a concurrent-caller
+    generator, so this finding gates the email harder than the earlier per-call flakiness theory did.
+    Single-caller demos remain reliable on current infrastructure.
+
 ## Sources
 
 - [31924: Stream - Websocket - Protocol Error](https://www.twilio.com/docs/api/errors/31924)
