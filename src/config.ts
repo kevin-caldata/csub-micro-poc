@@ -57,6 +57,14 @@ const EnvSchema = z.object({
   MCP_TOOL_TIMEOUT_MS: z.coerce.number().int().positive()
     .lt(5000, 'MCP_TOOL_TIMEOUT_MS must be < 5000 (runTool transport cap, src/tools.ts:42)')
     .default(4500),
+  // docs/findings/18: Railway's edge proxy intermittently kills live Twilio media streams
+  // (Twilio error 31924, abnormal close 1006) — a fatal drop for the caller under the old
+  // "nothing after </Connect>" TwiML. The <Connect action="/twiml-action"> reconnect flow
+  // (src/twiml.ts, src/reconnect.ts) converts that drop into a short gap on the SAME call by
+  // answering the action callback with a fresh <Connect><Stream>. This caps how many reconnects
+  // one call may be granted; 0 disables reconnect entirely (every stream end — abnormal or not —
+  // gets an empty <Response/>, restoring the pre-reconnect end-call behavior exactly).
+  STREAM_RECONNECT_MAX: z.coerce.number().int().min(0).default(2),
 });
 
 export interface AppConfig {
@@ -86,6 +94,8 @@ export interface AppConfig {
   mcpModelId: string;        // ← e.MCP_MODEL_ID
   mcpModelMaxTokens: number; // ← e.MCP_MODEL_MAX_TOKENS
   mcpToolTimeoutMs: number;  // ← e.MCP_TOOL_TIMEOUT_MS
+  /** findings/18 — max <Connect action> stream reconnects per call; 0 = disabled (see EnvSchema). */
+  streamReconnectMax: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -137,5 +147,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     mcpModelId: e.MCP_MODEL_ID,
     mcpModelMaxTokens: e.MCP_MODEL_MAX_TOKENS,
     mcpToolTimeoutMs: e.MCP_TOOL_TIMEOUT_MS,
+    streamReconnectMax: e.STREAM_RECONNECT_MAX,
   };
 }

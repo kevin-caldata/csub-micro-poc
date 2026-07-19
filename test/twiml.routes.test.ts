@@ -36,6 +36,7 @@ const fixtureConfig: AppConfig = {
   gatewayPingSeconds: 0,
   waitForSessionUpdated: false,
   gatewayTags: undefined,
+  streamReconnectMax: 2, // findings/18 reconnect (only /twiml-action reads it; present for shape fidelity)
 };
 
 /** Wraps process.stdout.write to capture logEvent()'s minified-JSON lines; always restore in `finally`. */
@@ -167,7 +168,11 @@ describe('registerTwimlRoutes — POST /twiml', () => {
     expect(String(res.headers['content-type'])).toMatch(/text\/xml/);
 
     const body = res.body;
-    expect(body).toMatch(/<Connect>/);
+    // findings/18 reconnect: <Connect> now carries the /twiml-action callback attributes.
+    const connectTag = body.match(/<Connect[^>]*>/)?.[0];
+    expect(connectTag, 'expected a <Connect ...> tag').toBeTruthy();
+    expect(connectTag).toContain(`action="https://${fixtureConfig.publicHost}/twiml-action"`);
+    expect(connectTag).toContain('method="POST"');
 
     const streamUrlMatch = body.match(/<Stream url="([^"]+)"/);
     expect(streamUrlMatch, 'expected a <Stream url="..."> attribute').toBeTruthy();
@@ -259,7 +264,7 @@ describe('registerTwimlRoutes — POST /twiml', () => {
     }
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toMatch(/<Connect>/);
+    expect(res.body).toMatch(/<Connect[ >]/); // findings/18: <Connect> now carries action/method attributes
 
     const failLines = capture.lines().filter((l) => l.event === 'getToken-failed');
     expect(failLines.length).toBe(1);

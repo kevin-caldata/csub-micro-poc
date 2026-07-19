@@ -7,6 +7,7 @@
 
 import WebSocket from 'ws';
 import { sessions as stateSessions } from './state.js';
+import { markExpectedEnd } from './reconnect.js';
 import type { LogLevel } from './logger.js';
 import type { GatewayLeg } from './gateway.js';
 import type { Transcoder } from './dsp.js';
@@ -194,6 +195,12 @@ export function teardownSession(
   sessions.delete(s.streamSid);
 
   if (s.twilioWs.readyState === WebSocket.OPEN || s.twilioWs.readyState === WebSocket.CONNECTING) {
+    // findings/18 reconnect: WE are initiating this close (caller-hangup stop, gateway-error
+    // teardown, SIGTERM drain, ...) — a deliberate end, so mark it 'expected' BEFORE closing
+    // and /twiml-action will end the call rather than reconnect it. When the socket already
+    // died out from under us (abnormal 1006 drop / stream-error terminate()), this block is
+    // skipped entirely — the close handler's markAbnormalEnd stands, and the call reconnects.
+    markExpectedEnd(s.callSid);
     s.twilioWs.close(opts?.twilioCloseCode ?? 1000, reason ?? 'bye');
   }
 }

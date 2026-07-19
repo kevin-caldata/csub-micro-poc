@@ -231,6 +231,10 @@ export interface OpenGatewayLegOptions {
   // (no session-update is sent yet — see T04.4), but part of the stable public signature.
   config: AppConfig; // deviation-by-design (see interface doc above)
   callbacks: GatewayLegCallbacks;
+  /** findings/18 reconnect flow: overrides the greeting `response-create` instructions for this
+   *  leg (session.ts passes RECONNECT_GREETING_INSTRUCTIONS for reconnected streams). Absent ->
+   *  the standard GREETING_INSTRUCTIONS — existing behavior, bit-identical. */
+  greetingInstructions?: string;
 }
 
 /** Public handle for one gateway WS leg (Spec 04 R5, verbatim). One `GatewayLeg` per call. */
@@ -321,6 +325,21 @@ const GREETING_INSTRUCTIONS =
   'everything I look up is simulated. I can help in English o en español - how can I help you today?"';
 
 /**
+ * Reconnect greeting (findings/18 <Connect action> stream-reconnect flow): used instead of
+ * GREETING_INSTRUCTIONS when the session is a RECONNECT of a call whose media stream was killed
+ * abnormally (Railway edge proxy, Twilio error 31924) — the caller already heard the full
+ * greeting/disclaimer on the original stream, so this one only acknowledges the drop and hands
+ * the turn straight back. Same per-response instruction-override mechanism as
+ * GREETING_INSTRUCTIONS (findings/04 D5). Exported (unlike GREETING_INSTRUCTIONS) because
+ * session.ts selects it per-call via `OpenGatewayLegOptions.greetingInstructions`.
+ */
+export const RECONNECT_GREETING_INSTRUCTIONS =
+  'The phone line dropped for a moment and has just been reconnected mid-call. Say exactly ' +
+  'this, then stop and listen: "Sorry about that - we lost the line for a moment. This is Rio ' +
+  'again. What can I help you with?" Do not repeat the full welcome greeting or the demo ' +
+  'disclaimer.';
+
+/**
  * Builds the full `session-update` config for a call (Spec 04 R8 snippet). `formats` comes
  * from Spec 06's `audioFormatsFor(config.audioMode)` — the single source of format objects;
  * this function never hand-builds them, only spreads what it is given (R7-style passthrough).
@@ -366,6 +385,7 @@ function buildCallSessionConfig(
  */
 export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
   const { mint, callSid, tools, formats, config, callbacks } = opts;
+  const greetingInstructions = opts.greetingInstructions ?? GREETING_INSTRUCTIONS;
 
   const rt = gateway.experimental_realtime(config.modelId);
   // Spec 10 R10 (test-only): GATEWAY_WS_URL bypasses mintRealtimeToken/getWebSocketConfig
@@ -675,7 +695,7 @@ export function openGatewayLeg(opts: OpenGatewayLegOptions): GatewayLeg {
     // handleEvent's 'session-updated' case funnel through this one closure, so
     // `onGreetingCreateSent` fires from a single call site regardless of path (Spec 08 R7).
     const greet = () =>
-      send({ type: 'response-create', options: { instructions: GREETING_INSTRUCTIONS } }).then(() => {
+      send({ type: 'response-create', options: { instructions: greetingInstructions } }).then(() => {
         callbacks.onGreetingCreateSent?.();
       });
     if (config.waitForSessionUpdated) {
