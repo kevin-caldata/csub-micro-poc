@@ -5,6 +5,7 @@ const { validateRequest } = twilio;
 import { mintRealtimeToken } from './gateway.js';
 import type { AppConfig } from './config.js';
 import { logEvent } from './logger.js';
+import { getSessionByStreamSid } from './sessions.js';
 
 export interface PendingCall {
   callSid: string;
@@ -65,8 +66,20 @@ export interface TwimlDeps {
 
 /**
  * Registers POST /twiml (signature-validated per Spec 02 R5.1, mint kick-off per R5.3, TwiML
- * response per R5.4) and POST /stream-status (log-only, R7). Two-arg-plus-deps form supersedes
- * Spec 02 R6's one-arg illustration — config is injected here, never re-loaded (planned deviation).
+ * response per R5.4) and POST /stream-status. Two-arg-plus-deps form supersedes Spec 02 R6's
+ * one-arg illustration — config is injected here, never re-loaded (planned deviation).
+ *
+ * /stream-status is otherwise log-only (R7), with ONE sanctioned exception (production
+ * zombie-socket fix, logs 18:09/18:11 — Twilio's protocol-error stream kills (e.g. 31924) send
+ * NO WebSocket close frame, so our Twilio-leg socket sits half-open for up to ~2 min until TCP
+ * death, keeping the session/gateway leg alive for a caller who is long gone): on
+ * `StreamEvent === 'stream-error'`, look up the live session by StreamSid and `terminate()` its
+ * Twilio socket immediately. `terminate()` (not `close()`) is deliberate — the peer is already
+ * gone, so there is no point attempting a graceful handshake — and it synchronously fires the
+ * socket's existing `'close'` handler (registered in twilio-media.ts), which runs the SAME
+ * `teardownSession` path as any other disconnect (gateway leg closed, session reaped). This
+ * handler does not itself implement teardown; it only triggers the existing one sooner. Every
+ * other route in this file, and the rest of this handler, is untouched (G8 signature gate).
  */
 export function registerTwimlRoutes(app: FastifyInstance, config: AppConfig, deps?: TwimlDeps): void {
   // Wave B/C merge point applied: /twiml delegates to Spec 04's mintRealtimeToken
@@ -164,6 +177,41 @@ export function registerTwimlRoutes(app: FastifyInstance, config: AppConfig, dep
       streamError: b.StreamError,
       timestamp: b.Timestamp,
     });
+
+    // Proactive teardown on Twilio's stream-error signal (see doc comment above). Wrapped
+    // defensively — this handler must never throw and must always still 204, regardless of
+    // what the lookup/terminate below does.
+    if (b.StreamEvent === 'stream-error') {
+      try {
+        const session = b.StreamSid ? getSessionByStreamSid(b.StreamSid) : undefined;
+        if (session) {
+          logEvent({
+            level: 'warn',
+            message: 'stream-error teardown',
+            event: 'stream-error-teardown',
+            callSid: b.CallSid,
+            streamSid: b.StreamSid,
+            streamErrorCode: b.StreamErrorCode,
+          });
+          // NOT close() — the peer already sent no close frame and is gone; terminate() drops
+          // the TCP connection immediately and synchronously fires the socket's existing
+          // 'close' handler (twilio-media.ts), which runs the normal teardownSession path.
+          session.twilioWs.terminate();
+        }
+        // No session found ⇒ already gone (torn down by some other path) — nothing to do
+        // beyond the log line above.
+      } catch (err) {
+        logEvent({
+          level: 'error',
+          message: 'stream-error teardown failed',
+          event: 'stream-error-teardown-failed',
+          callSid: b.CallSid,
+          streamSid: b.StreamSid,
+          err: String(err),
+        });
+      }
+    }
+
     return reply.code(204).send();
   });
 }
