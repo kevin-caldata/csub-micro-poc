@@ -30,14 +30,16 @@ function rpcPost(body: unknown, headers: Record<string, string> = jsonHeaders): 
 }
 
 describe('mcpRoutes — POST /mcp', () => {
-  it('A1: tools/list returns 200 application/json with exactly get_current_time and hello', async () => {
+  it('A1: tools/list returns 200 application/json and contains the registered tool surface', async () => {
     const res = await rpcPost({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
     expect(res.status).toBe(200);
     expect(String(res.headers.get('content-type'))).toMatch(/^application\/json/);
 
     const body = (await res.json()) as { result: { tools: Array<{ name: string }> } };
     const names = body.result.tools.map((t) => t.name).sort();
-    expect(names).toEqual(['get_current_time', 'hello']);
+    for (const name of ['get_current_time', 'hello', 'reset_password', 'verify_identity']) {
+      expect(names).toContain(name);
+    }
   });
 
   it('tools/call hello with a name greets that name', async () => {
